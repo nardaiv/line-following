@@ -32,8 +32,14 @@ constexpr float PID_KD = 0.15f;
 constexpr float PID_MAX_OUTPUT = 120.0f;
 constexpr float PID_INTEGRAL_LIMIT = 10.0f;
 
-constexpr int BASE_SPEED = 100;
+// 75 % of the original 100: more cycle-to-cycle sensor consistency at speed.
+constexpr int BASE_SPEED = 75;
 constexpr uint32_t CONTROL_PERIOD_MS = 10;
+
+// Coast, keeping the last commanded speeds, for this many cycles (~0.5 s)
+// after the line vanishes before accepting a genuine line loss. Sensor
+// dropouts should not strand the robot.
+constexpr uint16_t LINE_LOSS_GRACE_CYCLES = 50;
 
 // 90 degree corner handling (see the FSM in main.cpp): a run of adjacent
 // sensors firing together marks a lateral line segment, i.e. a sharp turn.

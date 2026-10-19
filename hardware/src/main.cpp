@@ -29,6 +29,7 @@ uint16_t cyclesSinceCluster = 0xFFFF;  // sentinel: no recent cluster
 bool clusterSideRight = false;         // side stamped with the latest cluster
 bool pivotRight = false;               // direction stored when the corner confirms
 uint32_t pivotStartMs = 0;
+uint16_t lossCycles = 0;               // consecutive all-dark cycles in Track
 float approachBias = 0.0f;             // decaying average of recent tracking
                                        // errors; fallback for segments
                                        // centered on the array's middle
@@ -125,12 +126,21 @@ void loop() {
           startPivot(clusterSideRight);
           return;  // spin is commanded on the next cycle
         }
+        // Sensors occasionally drop out. Coast on the last commanded speeds
+        // for a grace period before accepting a genuine loss.
+        if (lossCycles == 0) {
+          controller.reset();  // the previous error is no longer actionable
+        }
+        if (lossCycles < Config::LINE_LOSS_GRACE_CYCLES) {
+          ++lossCycles;
+          return;  // keep rolling on the last commanded speeds
+        }
         motors.stop();
-        controller.reset();
         cyclesSinceCluster = 0xFFFF;
         return;
       }
 
+      lossCycles = 0;
       if (cyclesSinceCluster != 0xFFFF) ++cyclesSinceCluster;
 
       float position = 0.0f;
@@ -184,6 +194,7 @@ void loop() {
           controller.reset();
           cornerState = CornerState::Track;
           cyclesSinceCluster = 0xFFFF;
+          lossCycles = 0;
           Serial.print("Line reacquired at index ");
           Serial.print(position, 1);
           Serial.print(" after ");
@@ -199,6 +210,7 @@ void loop() {
         controller.reset();
         cornerState = CornerState::Track;
         cyclesSinceCluster = 0xFFFF;
+        lossCycles = 0;
         Serial.println("Pivot timeout: stopping.");
         return;
       }
