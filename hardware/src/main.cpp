@@ -29,8 +29,9 @@ uint16_t cyclesSinceCluster = 0xFFFF;  // sentinel: no recent cluster
 bool clusterSideRight = false;         // side stamped with the latest cluster
 bool pivotRight = false;               // direction stored when the corner confirms
 uint32_t pivotStartMs = 0;
-int8_t lastErrorSide = 0;              // last nonzero error side; fallback for
-                                       // segments centered on the array's middle
+float approachBias = 0.0f;             // decaying average of recent tracking
+                                       // errors; fallback for segments
+                                       // centered on the array's middle
 
 enum class ClusterSide { None, Left, Right, Unknown };
 
@@ -135,11 +136,7 @@ void loop() {
       float position = 0.0f;
       lineSensor.readPosition(position);
       const float error = position - (Config::SENSOR_COUNT - 1) / 2.0f;
-      if (error > 0.25f) {
-        lastErrorSide = 1;
-      } else if (error < -0.25f) {
-        lastErrorSide = -1;
-      }
+      approachBias = approachBias * 0.9f + error * 0.1f;
 
       const ClusterSide side = classifyCluster(mask);
       if (side != ClusterSide::None) {
@@ -151,7 +148,7 @@ void loop() {
         } else {
           // Segment centered on the array: decide by the direction the line
           // was drifting before the cluster.
-          sideRight = lastErrorSide >= 0;
+          sideRight = approachBias >= 0.0f;
         }
         if (cyclesSinceCluster == 0xFFFF) {
           Serial.print("Lateral segment over the array (");
@@ -174,12 +171,28 @@ void loop() {
 
     case CornerState::Pivot: {
       if (mask != 0) {
-        motors.stop();
-        controller.reset();
-        cornerState = CornerState::Track;
-        cyclesSinceCluster = 0xFFFF;
-        Serial.println("Line reacquired: resuming tracking.");
-        return;
+        float position = 0.0f;
+        lineSensor.readPosition(position);
+        // Only accept a reacquire on the pivot side (or near center). A line
+        // appearing on the far outer flank during the spin is the approach
+        // line - grabbing it would turn the robot the wrong way, so the
+        // pivot continues until the new line swings in.
+        const bool onInnerSide = pivotRight ? position >= 1.5f : position <= 2.5f;
+        if (onInnerSide) {
+          const uint32_t pivotMs = millis() - pivotStartMs;
+          motors.stop();
+          controller.reset();
+          cornerState = CornerState::Track;
+          cyclesSinceCluster = 0xFFFF;
+          Serial.print("Line reacquired at index ");
+          Serial.print(position, 1);
+          Serial.print(" after ");
+          Serial.print(pivotMs);
+          Serial.println(" ms: resuming tracking.");
+          return;
+        }
+        // Otherwise: fell through the sweep or caught the old line - keep
+        // spinning (fall through to applySpin below).
       }
       if (millis() - pivotStartMs > Config::CORNER_PIVOT_TIMEOUT_MS) {
         motors.stop();
