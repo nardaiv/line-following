@@ -13,24 +13,24 @@ LineController controller;
 uint32_t previousControlTime = 0;
 bool motorsEnabled = false;
 
-// States of the 90 degree corner handler:
-//   Track      - normal PID line following (the FSM starts here).
-//   Confirming - a lateral line segment was seen over the array (a run of
-//                adjacent sensors firing together); wait for the line to
-//                vanish to confirm a 90 degree turn.
-//   Pivot      - confirmed corner: spin on the spot toward the corner side
-//                until any sensor reacquires the line.
-enum class CornerState { Track, Confirming, Pivot };
+// Corner handling FSM:
+//   Track - normal PID line following. A run of >= CORNER_MIN_RUN adjacent
+//           sensors lights up when a lateral line segment (90 degree corner)
+//           is over the array; the run's midpoint names the corner side.
+//           The blackout (all sensors dark) arriving within
+//           CORNER_RECENT_CYCLES of the latest cluster sighting confirms the
+//           corner - at speed the cluster can flash by in one cycle.
+//   Pivot - confirmed corner: spin on the spot toward the remembered side
+//           until any sensor reacquires the line.
+enum class CornerState { Track, Pivot };
 CornerState cornerState = CornerState::Track;
 
-uint8_t clusterCycles = 0;      // debounce counter while in the Track state
-bool clusterSideRight = false;  // side remembered from the cluster cycles
-uint8_t windowCycles = 0;       // time spent in the Confirming state
-uint8_t blackoutCycles = 0;     // consecutive all-dark cycles in Confirming
-bool pivotRight = false;        // direction stored when the corner confirms
+uint16_t cyclesSinceCluster = 0xFFFF;  // sentinel: no recent cluster
+bool clusterSideRight = false;         // side stamped with the latest cluster
+bool pivotRight = false;               // direction stored when the corner confirms
 uint32_t pivotStartMs = 0;
-int8_t lastErrorSide = 0;       // last nonzero error side; fallback for
-                                // clusters centered on the array's middle
+int8_t lastErrorSide = 0;              // last nonzero error side; fallback for
+                                       // segments centered on the array's middle
 
 enum class ClusterSide { None, Left, Right, Unknown };
 
@@ -66,9 +66,6 @@ uint8_t longestRun(uint8_t mask, float& runMid) {
   return bestLen;
 }
 
-// A lateral line segment over the array (longest run >= CORNER_MIN_RUN) is the
-// corner signature. The run's midpoint names the side; a midpoint centered on
-// the array gives no side information and is reported as Unknown.
 ClusterSide classifyCluster(uint8_t mask) {
   float runMid = 0.0f;
   if (longestRun(mask, runMid) < Config::CORNER_MIN_RUN) return ClusterSide::None;
@@ -122,12 +119,19 @@ void loop() {
   switch (cornerState) {
     case CornerState::Track: {
       if (mask == 0) {
+        if (cyclesSinceCluster <= Config::CORNER_RECENT_CYCLES) {
+          // Lateral segment seen moments ago, now all dark: 90 degree turn.
+          startPivot(clusterSideRight);
+          return;  // spin is commanded on the next cycle
+        }
         motors.stop();
         controller.reset();
+        cyclesSinceCluster = 0xFFFF;
         return;
       }
 
-      ClusterSide side = classifyCluster(mask);
+      if (cyclesSinceCluster != 0xFFFF) ++cyclesSinceCluster;
+
       float position = 0.0f;
       lineSensor.readPosition(position);
       const float error = position - (Config::SENSOR_COUNT - 1) / 2.0f;
@@ -137,34 +141,25 @@ void loop() {
         lastErrorSide = -1;
       }
 
-      if (side == ClusterSide::None) {
-        clusterCycles = 0;
-      } else {
+      const ClusterSide side = classifyCluster(mask);
+      if (side != ClusterSide::None) {
         bool sideRight;
         if (side == ClusterSide::Right) {
           sideRight = true;
         } else if (side == ClusterSide::Left) {
           sideRight = false;
         } else {
-          // Segment centered on the middle of the array: decide by the
-          // direction the line was drifting before the cluster.
+          // Segment centered on the array: decide by the direction the line
+          // was drifting before the cluster.
           sideRight = lastErrorSide >= 0;
         }
-        if (clusterCycles == 0 || sideRight != clusterSideRight) {
-          clusterCycles = 1;
-          clusterSideRight = sideRight;
-        } else {
-          ++clusterCycles;
+        if (cyclesSinceCluster == 0xFFFF) {
+          Serial.print("Lateral segment over the array (");
+          Serial.print(sideRight ? "right" : "left");
+          Serial.println(").");
         }
-        if (clusterCycles >= Config::CORNER_CLUSTER_CYCLES) {
-          windowCycles = 0;
-          blackoutCycles = 0;
-          clusterCycles = 0;
-          cornerState = CornerState::Confirming;
-          Serial.print("Lateral line over the array (");
-          Serial.print(clusterSideRight ? "right" : "left");
-          Serial.println("): waiting for the line to end.");
-        }
+        clusterSideRight = sideRight;
+        cyclesSinceCluster = 0;
       }
 
       const float correction = controller.update(error, elapsed / 1000.0f);
@@ -177,38 +172,12 @@ void loop() {
       return;
     }
 
-    case CornerState::Confirming: {
-      ++windowCycles;
-      if (mask == 0) {
-        if (++blackoutCycles >= Config::CORNER_BLACKOUT_CYCLES) {
-          startPivot(clusterSideRight);
-          return;  // spin is commanded on the next cycle
-        }
-        if (windowCycles >= Config::CORNER_WINDOW_CYCLES) {
-          // Rare: went dark too late - treat as a plain line loss.
-          cornerState = CornerState::Track;
-          motors.stop();
-          controller.reset();
-          Serial.println("Blackout outside the window: stopping.");
-        }
-        return;
-      }
-
-      blackoutCycles = 0;
-      if (classifyCluster(mask) == ClusterSide::None) {
-        // The line reappeared as ordinary tracking before vanishing: false
-        // alarm (e.g. a thick segment or a fork), resume PID.
-        cornerState = CornerState::Track;
-        Serial.println("Line reappeared without a blackout: no corner.");
-      }
-      return;
-    }
-
     case CornerState::Pivot: {
       if (mask != 0) {
         motors.stop();
         controller.reset();
         cornerState = CornerState::Track;
+        cyclesSinceCluster = 0xFFFF;
         Serial.println("Line reacquired: resuming tracking.");
         return;
       }
@@ -216,6 +185,7 @@ void loop() {
         motors.stop();
         controller.reset();
         cornerState = CornerState::Track;
+        cyclesSinceCluster = 0xFFFF;
         Serial.println("Pivot timeout: stopping.");
         return;
       }

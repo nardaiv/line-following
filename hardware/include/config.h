@@ -37,11 +37,12 @@ constexpr uint32_t CONTROL_PERIOD_MS = 10;
 
 // 90 degree corner handling (see the FSM in main.cpp): a run of adjacent
 // sensors firing together marks a lateral line segment, i.e. a sharp turn.
-constexpr uint8_t CORNER_MIN_RUN = 3;          // adjacent sensors = corner signature
-constexpr uint8_t CORNER_CLUSTER_CYCLES = 2;   // consecutive cluster cycles to debounce
-constexpr uint8_t CORNER_WINDOW_CYCLES = 15;   // max cycles to wait for the blackout
-constexpr uint8_t CORNER_BLACKOUT_CYCLES = 2;  // consecutive all-dark cycles to confirm
-constexpr int CORNER_PIVOT_SPEED = 90;         // spin PWM while rotating on the spot
+// At speed the cluster can transit the array in a couple of control cycles,
+// so confirmation is anchored to the blackout arriving within
+// CORNER_RECENT_CYCLES of the latest cluster sighting.
+constexpr uint8_t CORNER_MIN_RUN = 3;         // adjacent sensors = corner signature
+constexpr uint8_t CORNER_RECENT_CYCLES = 5;   // blackout shortly after a cluster confirms
+constexpr int CORNER_PIVOT_SPEED = 90;        // spin PWM while rotating on the spot
 constexpr uint32_t CORNER_PIVOT_TIMEOUT_MS = 1500;
 
 }  // namespace Config
