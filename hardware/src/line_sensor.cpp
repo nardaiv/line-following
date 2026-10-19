@@ -28,3 +28,15 @@ bool LineSensor::readPosition(float& position) {
   position = static_cast<float>(weightedTotal) / strengthTotal;
   return true;
 }
+
+uint8_t LineSensor::readMask() {
+  uint8_t mask = 0;
+  for (uint8_t i = 0; i < Config::SENSOR_COUNT; ++i) {
+    const int reading = digitalRead(Config::SENSOR_PINS[i]);
+    const bool detectsLine = Config::SENSOR_LINE_ACTIVE_LOW
+                                 ? reading == LOW
+                                 : reading == HIGH;
+    if (detectsLine) mask |= static_cast<uint8_t>(1u << i);
+  }
+  return mask;
+}
