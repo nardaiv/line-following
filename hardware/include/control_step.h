@@ -44,9 +44,16 @@ class ControlStep {
   ControlMode mode_;
   uint16_t cyclesSinceCluster_;
   bool clusterSideRight_;
+  bool cornerCandidateValid_;
+  bool cornerCandidateRight_;
+  uint8_t cornerCandidateCycles_;
+  bool cornerConfirmed_;
   bool pivotRight_;
   uint32_t pivotStartMs_;
   uint16_t lossCycles_;
-  float approachBias_;
-  bool lineLost_;
+  uint8_t zeroMaskCycles_;
+  uint8_t reacquireCycles_;
+  uint32_t pidElapsedMs_;
+  int lastLeftSpeed_;
+  int lastRightSpeed_;
 };

@@ -31,24 +31,30 @@ constexpr float PID_KI = 1.0f;
 constexpr float PID_KD = 0.15f;
 constexpr float PID_MAX_OUTPUT = 120.0f;
 constexpr float PID_INTEGRAL_LIMIT = 10.0f;
+// Initial low-pass time constant for derivative noise from the binary sensor array.
+// Keep gains unchanged until hardware traces establish a safe tuning baseline.
+constexpr uint32_t PID_DERIVATIVE_FILTER_TAU_MS = 30;
 
 // 75 % of the original 100: more cycle-to-cycle sensor consistency at speed.
 constexpr int BASE_SPEED = 75;
 constexpr uint32_t CONTROL_PERIOD_MS = 10;
 constexpr uint32_t CONTROL_DT_MAX_MS = 50;  // bound PID integration after scheduling stalls
 
-// Coast, keeping the last commanded speeds, for this many cycles (~0.5 s)
-// after the line vanishes before accepting a genuine line loss. Sensor
-// dropouts should not strand the robot.
+// Retain the last commanded motor speeds for this many cycles (~0.5 s) after
+// the line vanishes before accepting a genuine line loss. This is not coasting;
+// measure stopping distance before changing the grace period or action.
 constexpr uint16_t LINE_LOSS_GRACE_CYCLES = 50;
 
-// 90 degree corner handling (see the FSM in main.cpp): a run of adjacent
+// Corner handling in control_step.cpp: a run of adjacent
 // sensors firing together marks a lateral line segment, i.e. a sharp turn.
 // At speed the cluster can transit the array in a couple of control cycles,
 // so confirmation is anchored to the blackout arriving within
 // CORNER_RECENT_CYCLES of the latest cluster sighting.
 constexpr uint8_t CORNER_MIN_RUN = 3;         // adjacent sensors = corner signature
 constexpr uint8_t CORNER_RECENT_CYCLES = 5;   // blackout shortly after a cluster confirms
+constexpr uint8_t CORNER_CONFIRM_CYCLES = 2;
+constexpr uint8_t CORNER_BLACKOUT_CONFIRM_CYCLES = 2;
+constexpr uint8_t LINE_REACQUIRE_CONFIRM_CYCLES = 2;
 constexpr int CORNER_PIVOT_SPEED = 90;        // spin PWM while rotating on the spot
 constexpr uint32_t CORNER_PIVOT_TIMEOUT_MS = 1500;
 

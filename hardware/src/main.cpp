@@ -49,7 +49,9 @@ void printInfo() {
   Serial.print("|kd=");
   Serial.print(runtimeContext.initialPid.kd, 6);
   Serial.print("|revision=");
-  Serial.println(runtimeContext.initialPid.revision);
+  Serial.print(runtimeContext.initialPid.revision);
+  Serial.print("|sensorMask=");
+  Serial.println(lineSensor.read().mask);
 }
 
 bool commitPidConfig(PidConfig candidate) {

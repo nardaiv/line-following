@@ -68,11 +68,18 @@ ControlStep::ControlStep()
       mode_(ControlMode::Track),
       cyclesSinceCluster_(NO_RECENT_CLUSTER),
       clusterSideRight_(false),
+      cornerCandidateValid_(false),
+      cornerCandidateRight_(false),
+      cornerCandidateCycles_(0),
+      cornerConfirmed_(false),
       pivotRight_(false),
       pivotStartMs_(0),
       lossCycles_(0),
-      approachBias_(0.0f),
-      lineLost_(false) {}
+      zeroMaskCycles_(0),
+      reacquireCycles_(0),
+      pidElapsedMs_(0),
+      lastLeftSpeed_(0),
+      lastRightSpeed_(0) {}
 
 bool ControlStep::configurePid(const PidConfig& config) {
   if (!isPidConfigValid(config)) return false;
@@ -82,99 +89,216 @@ bool ControlStep::configurePid(const PidConfig& config) {
 
 ControlOutput ControlStep::update(const SensorReading& reading,
                                   uint32_t elapsedMs, uint32_t nowMs) {
-  ControlOutput output = makeOutput(
-      reading, lineLost_ && reading.mask == 0 ? ControlMode::Lost : mode_);
+  ControlOutput output = makeOutput(reading, mode_);
 
-  if (mode_ == ControlMode::Track) {
-    if (reading.mask == 0) {
-      if (cyclesSinceCluster_ <= Config::CORNER_RECENT_CYCLES) {
+  if (mode_ == ControlMode::Lost) {
+    if (reading.mask != 0) {
+      if (reacquireCycles_ < Config::LINE_REACQUIRE_CONFIRM_CYCLES) {
+        ++reacquireCycles_;
+      }
+      if (reacquireCycles_ >= Config::LINE_REACQUIRE_CONFIRM_CYCLES) {
+        mode_ = ControlMode::Track;
+        cyclesSinceCluster_ = NO_RECENT_CLUSTER;
+        cornerCandidateValid_ = false;
+        cornerConfirmed_ = false;
+        lossCycles_ = 0;
+        zeroMaskCycles_ = 0;
+        reacquireCycles_ = 0;
+        pidElapsedMs_ = 0;
+        controller_.reset();
+        output.mode = ControlMode::Track;
+        output.event = ControlEvent::LineReacquired;
+        output.motorAction = MotorAction::Stop;
+        lastLeftSpeed_ = 0;
+        lastRightSpeed_ = 0;
+        return output;
+      }
+    } else {
+      reacquireCycles_ = 0;
+    }
+    output.mode = ControlMode::Lost;
+    output.motorAction = MotorAction::Stop;
+    lastLeftSpeed_ = 0;
+    lastRightSpeed_ = 0;
+    return output;
+  }
+
+  if (mode_ == ControlMode::Pivot) {
+    if (reading.mask != 0) {
+      const bool onInnerSide = pivotRight_ ? reading.position >= 1.5f
+                                           : reading.position <= 2.5f;
+      if (onInnerSide) {
+        if (reacquireCycles_ < Config::LINE_REACQUIRE_CONFIRM_CYCLES) {
+          ++reacquireCycles_;
+        }
+      } else {
+        reacquireCycles_ = 0;
+      }
+      if (reacquireCycles_ >= Config::LINE_REACQUIRE_CONFIRM_CYCLES) {
+        mode_ = ControlMode::Track;
+        cyclesSinceCluster_ = NO_RECENT_CLUSTER;
+        cornerCandidateValid_ = false;
+        cornerConfirmed_ = false;
+        lossCycles_ = 0;
+        zeroMaskCycles_ = 0;
+        reacquireCycles_ = 0;
+        pidElapsedMs_ = 0;
+        controller_.reset();
+        output.mode = ControlMode::Track;
+        output.event = ControlEvent::LineReacquired;
+        output.motorAction = MotorAction::Stop;
+        lastLeftSpeed_ = 0;
+        lastRightSpeed_ = 0;
+        return output;
+      }
+    } else {
+      reacquireCycles_ = 0;
+    }
+
+    if (static_cast<uint32_t>(nowMs - pivotStartMs_) >
+        Config::CORNER_PIVOT_TIMEOUT_MS) {
+      mode_ = ControlMode::Lost;
+      cyclesSinceCluster_ = NO_RECENT_CLUSTER;
+      cornerConfirmed_ = false;
+      lossCycles_ = 0;
+      pidElapsedMs_ = 0;
+      controller_.reset();
+      output.mode = ControlMode::Lost;
+      output.event = ControlEvent::PivotTimedOut;
+      output.motorAction = MotorAction::Stop;
+      lastLeftSpeed_ = 0;
+      lastRightSpeed_ = 0;
+      return output;
+    }
+
+    output.mode = ControlMode::Pivot;
+    output.motorAction = MotorAction::Drive;
+    output.leftSpeed = pivotRight_ ? Config::CORNER_PIVOT_SPEED
+                                   : -Config::CORNER_PIVOT_SPEED;
+    output.rightSpeed = -output.leftSpeed;
+    lastLeftSpeed_ = output.leftSpeed;
+    lastRightSpeed_ = output.rightSpeed;
+    return output;
+  }
+
+  if (reading.mask == 0) {
+    if (cornerConfirmed_ &&
+        cyclesSinceCluster_ <= Config::CORNER_RECENT_CYCLES) {
+      if (zeroMaskCycles_ < Config::CORNER_BLACKOUT_CONFIRM_CYCLES) {
+        ++zeroMaskCycles_;
+      }
+      if (zeroMaskCycles_ >= Config::CORNER_BLACKOUT_CONFIRM_CYCLES) {
         pivotRight_ = clusterSideRight_;
         pivotStartMs_ = nowMs;
         mode_ = ControlMode::Pivot;
+        reacquireCycles_ = 0;
+        pidElapsedMs_ = 0;
+        controller_.reset();
         output.mode = ControlMode::Pivot;
         output.event = ControlEvent::PivotStarted;
+        output.motorAction = MotorAction::Drive;
+        output.leftSpeed = pivotRight_ ? Config::CORNER_PIVOT_SPEED
+                                       : -Config::CORNER_PIVOT_SPEED;
+        output.rightSpeed = -output.leftSpeed;
+        lastLeftSpeed_ = output.leftSpeed;
+        lastRightSpeed_ = output.rightSpeed;
         return output;
       }
-      if (lossCycles_ == 0) controller_.reset();
-      if (lossCycles_ < Config::LINE_LOSS_GRACE_CYCLES) {
-        ++lossCycles_;
-        output.mode = ControlMode::Track;
-        return output;
+      output.motorAction = MotorAction::Hold;
+      output.leftSpeed = lastLeftSpeed_;
+      output.rightSpeed = lastRightSpeed_;
+      pidElapsedMs_ += elapsedMs;
+      if (pidElapsedMs_ > Config::CONTROL_DT_MAX_MS) {
+        pidElapsedMs_ = Config::CONTROL_DT_MAX_MS;
       }
-      cyclesSinceCluster_ = NO_RECENT_CLUSTER;
-      lineLost_ = true;
-      output.mode = ControlMode::Lost;
-      output.motorAction = MotorAction::Stop;
       return output;
     }
 
-    lossCycles_ = 0;
-    lineLost_ = false;
-    if (cyclesSinceCluster_ != NO_RECENT_CLUSTER) ++cyclesSinceCluster_;
-
-    const float center = (Config::SENSOR_COUNT - 1) / 2.0f;
-    const float error = reading.position - center;
-    output.error = error;
-    approachBias_ = approachBias_ * 0.9f + error * 0.1f;
-
-    const ClusterSide side = classifyCluster(reading.mask);
-    if (side != ClusterSide::None) {
-      bool sideRight;
-      if (side == ClusterSide::Right) {
-        sideRight = true;
-      } else if (side == ClusterSide::Left) {
-        sideRight = false;
-      } else {
-        sideRight = approachBias_ >= 0.0f;
+    if (lossCycles_ < Config::LINE_LOSS_GRACE_CYCLES) {
+      ++lossCycles_;
+      output.motorAction = MotorAction::Hold;
+      output.leftSpeed = lastLeftSpeed_;
+      output.rightSpeed = lastRightSpeed_;
+      pidElapsedMs_ += elapsedMs;
+      if (pidElapsedMs_ > Config::CONTROL_DT_MAX_MS) {
+        pidElapsedMs_ = Config::CONTROL_DT_MAX_MS;
       }
-      if (cyclesSinceCluster_ == NO_RECENT_CLUSTER) {
+      return output;
+    }
+
+    mode_ = ControlMode::Lost;
+    cyclesSinceCluster_ = NO_RECENT_CLUSTER;
+    cornerCandidateValid_ = false;
+    cornerConfirmed_ = false;
+    zeroMaskCycles_ = 0;
+    reacquireCycles_ = 0;
+    pidElapsedMs_ = 0;
+    controller_.reset();
+    output.mode = ControlMode::Lost;
+    output.motorAction = MotorAction::Stop;
+    lastLeftSpeed_ = 0;
+    lastRightSpeed_ = 0;
+    return output;
+  }
+
+  lossCycles_ = 0;
+  zeroMaskCycles_ = 0;
+  if (cyclesSinceCluster_ != NO_RECENT_CLUSTER) {
+    if (cyclesSinceCluster_ < NO_RECENT_CLUSTER - 1) {
+      ++cyclesSinceCluster_;
+    }
+    if (cyclesSinceCluster_ > Config::CORNER_RECENT_CYCLES) {
+      cyclesSinceCluster_ = NO_RECENT_CLUSTER;
+      cornerConfirmed_ = false;
+    }
+  }
+
+  const ClusterSide side = classifyCluster(reading.mask);
+  if (side == ClusterSide::Left || side == ClusterSide::Right) {
+    const bool candidateRight = side == ClusterSide::Right;
+    if (cornerConfirmed_ && clusterSideRight_ != candidateRight) {
+      cornerConfirmed_ = false;
+      cyclesSinceCluster_ = NO_RECENT_CLUSTER;
+    }
+    if (!cornerCandidateValid_ || cornerCandidateRight_ != candidateRight) {
+      cornerCandidateValid_ = true;
+      cornerCandidateRight_ = candidateRight;
+      cornerCandidateCycles_ = 1;
+    } else if (cornerCandidateCycles_ < Config::CORNER_CONFIRM_CYCLES) {
+      ++cornerCandidateCycles_;
+    }
+    if (cornerCandidateCycles_ >= Config::CORNER_CONFIRM_CYCLES) {
+      if (!cornerConfirmed_ || clusterSideRight_ != candidateRight) {
         output.event = ControlEvent::CornerCluster;
       }
-      clusterSideRight_ = sideRight;
+      cornerConfirmed_ = true;
+      clusterSideRight_ = candidateRight;
       cyclesSinceCluster_ = 0;
     }
-
-    const float correction = controller_.update(error, elapsedMs / 1000.0f);
-    output.correction = correction;
-    output.leftSpeed = clampMotorSpeed(Config::BASE_SPEED + correction);
-    output.rightSpeed = clampMotorSpeed(Config::BASE_SPEED - correction);
-    output.motorAction = MotorAction::Drive;
-    return output;
-  }
-
-  if (reading.mask != 0) {
-    const bool onInnerSide = pivotRight_ ? reading.position >= 1.5f
-                                         : reading.position <= 2.5f;
-    if (onInnerSide) {
-      mode_ = ControlMode::Track;
+  } else {
+    cornerCandidateValid_ = false;
+    cornerCandidateCycles_ = 0;
+    if (side == ClusterSide::Unknown) {
+      cornerConfirmed_ = false;
       cyclesSinceCluster_ = NO_RECENT_CLUSTER;
-      lossCycles_ = 0;
-      lineLost_ = false;
-      controller_.reset();
-      output.mode = ControlMode::Track;
-      output.event = ControlEvent::LineReacquired;
-      output.motorAction = MotorAction::Stop;
-      return output;
     }
   }
 
-  if (static_cast<uint32_t>(nowMs - pivotStartMs_) >
-      Config::CORNER_PIVOT_TIMEOUT_MS) {
-    mode_ = ControlMode::Track;
-    cyclesSinceCluster_ = NO_RECENT_CLUSTER;
-    lossCycles_ = 0;
-    lineLost_ = false;
-    controller_.reset();
-    output.mode = ControlMode::Track;
-    output.event = ControlEvent::PivotTimedOut;
-    output.motorAction = MotorAction::Stop;
-    return output;
+  const float center = (Config::SENSOR_COUNT - 1) / 2.0f;
+  const float error = reading.position - center;
+  output.error = error;
+  uint32_t pidDtMs = pidElapsedMs_ + elapsedMs;
+  pidElapsedMs_ = 0;
+  if (pidDtMs == 0) pidDtMs = 1;
+  if (pidDtMs > Config::CONTROL_DT_MAX_MS) {
+    pidDtMs = Config::CONTROL_DT_MAX_MS;
   }
-
-  output.mode = ControlMode::Pivot;
+  const float correction = controller_.update(error, pidDtMs / 1000.0f);
+  output.correction = correction;
+  output.leftSpeed = clampMotorSpeed(Config::BASE_SPEED + correction);
+  output.rightSpeed = clampMotorSpeed(Config::BASE_SPEED - correction);
   output.motorAction = MotorAction::Drive;
-  output.leftSpeed = pivotRight_ ? Config::CORNER_PIVOT_SPEED
-                                  : -Config::CORNER_PIVOT_SPEED;
-  output.rightSpeed = -output.leftSpeed;
+  lastLeftSpeed_ = output.leftSpeed;
+  lastRightSpeed_ = output.rightSpeed;
   return output;
 }

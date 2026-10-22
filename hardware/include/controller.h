@@ -23,5 +23,6 @@ class LineController {
   float integralLimit_;
   float integral_;
   float previousError_;
+  float filteredDerivative_;
   bool hasPreviousError_;
 };

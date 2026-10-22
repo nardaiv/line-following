@@ -41,7 +41,23 @@ void test_integral_is_applied_and_reset() {
 void test_derivative_responds_to_error_change() {
   LineController controller(0.0f, 0.0f, 1.0f, 100.0f, 10.0f);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, controller.update(1.0f, 1.0f));
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, controller.update(3.0f, 1.0f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f / 1.03f,
+                           controller.update(3.0f, 1.0f));
+}
+
+void test_derivative_filter_reduces_single_sample_sensor_jump() {
+  LineController controller(0.0f, 0.0f, 0.15f, 120.0f, 10.0f);
+  controller.update(0.0f, 0.01f);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.75f, controller.update(1.0f, 0.01f));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8125f, controller.update(1.0f, 0.01f));
+}
+
+void test_saturated_controller_does_not_wind_up_integral() {
+  LineController controller(10.0f, 1.0f, 0.0f, 10.0f, 10.0f);
+  for (uint8_t i = 0; i < 20; ++i) {
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 10.0f, controller.update(1.0f, 1.0f));
+  }
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, controller.update(0.0f, 1.0f));
 }
 
 void test_sensor_reading_is_derived_from_one_mask() {
@@ -68,14 +84,15 @@ void test_sensor_reading_is_derived_from_one_mask() {
 void test_right_cluster_confirms_right_pivot() {
   ControlStep step;
   ControlOutput output = step.update(sensorReadingFromMask(0b11100), 10, 10);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0b11100), 10, 20);
   TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
 
-  output = step.update(sensorReadingFromMask(0), 10, 20);
+  output = step.update(sensorReadingFromMask(0), 10, 30);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 40);
   TEST_ASSERT_EQUAL(ControlEvent::PivotStarted, output.event);
   TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
-  TEST_ASSERT_EQUAL(MotorAction::Hold, output.motorAction);
-
-  output = step.update(sensorReadingFromMask(0), 10, 30);
   TEST_ASSERT_EQUAL(MotorAction::Drive, output.motorAction);
   TEST_ASSERT_EQUAL_INT(Config::CORNER_PIVOT_SPEED, output.leftSpeed);
   TEST_ASSERT_EQUAL_INT(-Config::CORNER_PIVOT_SPEED, output.rightSpeed);
@@ -84,14 +101,15 @@ void test_right_cluster_confirms_right_pivot() {
 void test_left_cluster_confirms_left_pivot() {
   ControlStep step;
   step.update(sensorReadingFromMask(0b00111), 10, 10);
-  step.update(sensorReadingFromMask(0), 10, 20);
-  const ControlOutput output = step.update(sensorReadingFromMask(0), 10, 30);
+  step.update(sensorReadingFromMask(0b00111), 10, 20);
+  step.update(sensorReadingFromMask(0), 10, 30);
+  const ControlOutput output = step.update(sensorReadingFromMask(0), 10, 40);
   TEST_ASSERT_EQUAL(MotorAction::Drive, output.motorAction);
   TEST_ASSERT_EQUAL_INT(-Config::CORNER_PIVOT_SPEED, output.leftSpeed);
   TEST_ASSERT_EQUAL_INT(Config::CORNER_PIVOT_SPEED, output.rightSpeed);
 }
 
-void test_line_loss_coasts_for_grace_then_stops() {
+void test_line_loss_holds_previous_command_then_stops() {
   ControlStep step;
   ControlOutput output;
   for (uint16_t i = 0; i < Config::LINE_LOSS_GRACE_CYCLES; ++i) {
@@ -107,17 +125,104 @@ void test_line_loss_coasts_for_grace_then_stops() {
   TEST_ASSERT_EQUAL(ControlMode::Lost, output.mode);
 }
 
+void test_hold_reports_the_last_commanded_motor_speeds() {
+  ControlStep step;
+  const ControlOutput driving =
+      step.update(sensorReadingFromMask(0b00100), 10, 10);
+  TEST_ASSERT_EQUAL(MotorAction::Drive, driving.motorAction);
+
+  const ControlOutput held = step.update(sensorReadingFromMask(0), 10, 20);
+  TEST_ASSERT_EQUAL(MotorAction::Hold, held.motorAction);
+  TEST_ASSERT_EQUAL_INT(driving.leftSpeed, held.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(driving.rightSpeed, held.rightSpeed);
+}
+
+void test_single_sensor_dropout_preserves_pid_history_and_elapsed_time() {
+  ControlStep step;
+  PidConfig config = defaultPidConfig();
+  config.kp = 0.0f;
+  config.ki = 1.0f;
+  config.kd = 0.0f;
+  TEST_ASSERT_TRUE(step.configurePid(config));
+
+  ControlOutput output = step.update(sensorReadingFromMask(0b10000), 10, 10);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.02f, output.correction);
+  output = step.update(sensorReadingFromMask(0), 10, 20);
+  TEST_ASSERT_EQUAL(MotorAction::Hold, output.motorAction);
+  output = step.update(sensorReadingFromMask(0b10000), 10, 30);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.06f, output.correction);
+}
+
+void test_center_wide_cluster_does_not_start_a_corner_pivot() {
+  ControlStep step;
+  ControlOutput output = step.update(sensorReadingFromMask(0b01110), 10, 10);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0b01110), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 30);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 40);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+}
+
+void test_corner_requires_confirmed_cluster_and_stable_reacquisition() {
+  ControlStep step;
+  ControlOutput output = step.update(sensorReadingFromMask(0b11100), 10, 10);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0b11100), 10, 20);
+  TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 30);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 40);
+  TEST_ASSERT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
+
+  output = step.update(sensorReadingFromMask(0b00100), 10, 50);
+  TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::LineReacquired, output.event);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 60);
+  TEST_ASSERT_EQUAL(ControlEvent::LineReacquired, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+  TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
+}
+
+void test_lost_state_stops_until_line_is_stably_reacquired() {
+  ControlStep step;
+  step.update(sensorReadingFromMask(0b00100), 10, 10);
+  ControlOutput output;
+  for (uint16_t i = 0; i <= Config::LINE_LOSS_GRACE_CYCLES; ++i) {
+    output = step.update(sensorReadingFromMask(0), 10,
+                         20 + i * Config::CONTROL_PERIOD_MS);
+  }
+  TEST_ASSERT_EQUAL(ControlMode::Lost, output.mode);
+  TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
+
+  output = step.update(sensorReadingFromMask(0b00100), 10, 600);
+  TEST_ASSERT_EQUAL(ControlMode::Lost, output.mode);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::LineReacquired, output.event);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 610);
+  TEST_ASSERT_EQUAL(ControlEvent::LineReacquired, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+  TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 620);
+  TEST_ASSERT_EQUAL(MotorAction::Drive, output.motorAction);
+}
+
 void test_right_pivot_ignores_far_left_and_reacquires_center() {
   ControlStep step;
   step.update(sensorReadingFromMask(0b11100), 10, 10);
-  step.update(sensorReadingFromMask(0), 10, 20);
+  step.update(sensorReadingFromMask(0b11100), 10, 20);
   step.update(sensorReadingFromMask(0), 10, 30);
+  step.update(sensorReadingFromMask(0), 10, 40);
 
-  ControlOutput output = step.update(sensorReadingFromMask(0b00001), 10, 40);
+  ControlOutput output = step.update(sensorReadingFromMask(0b00001), 10, 50);
   TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
   TEST_ASSERT_EQUAL(MotorAction::Drive, output.motorAction);
 
-  output = step.update(sensorReadingFromMask(0b00100), 10, 50);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 60);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::LineReacquired, output.event);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 70);
   TEST_ASSERT_EQUAL(ControlEvent::LineReacquired, output.event);
   TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
   TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
@@ -126,48 +231,61 @@ void test_right_pivot_ignores_far_left_and_reacquires_center() {
 void test_left_pivot_ignores_far_right_and_reacquires_center() {
   ControlStep step;
   step.update(sensorReadingFromMask(0b00111), 10, 10);
-  step.update(sensorReadingFromMask(0), 10, 20);
+  step.update(sensorReadingFromMask(0b00111), 10, 20);
   step.update(sensorReadingFromMask(0), 10, 30);
+  step.update(sensorReadingFromMask(0), 10, 40);
 
-  ControlOutput output = step.update(sensorReadingFromMask(0b10000), 10, 40);
+  ControlOutput output = step.update(sensorReadingFromMask(0b10000), 10, 50);
   TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
   TEST_ASSERT_EQUAL(MotorAction::Drive, output.motorAction);
 
-  output = step.update(sensorReadingFromMask(0b00100), 10, 50);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 60);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::LineReacquired, output.event);
+  output = step.update(sensorReadingFromMask(0b00100), 10, 70);
   TEST_ASSERT_EQUAL(ControlEvent::LineReacquired, output.event);
   TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
   TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
 }
 
 void test_center_cluster_uses_recent_drift_direction() {
-  ControlStep rightStep;
-  rightStep.update(sensorReadingFromMask(0b11000), 10, 10);
-  ControlOutput output =
-      rightStep.update(sensorReadingFromMask(0b01110), 10, 20);
-  TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
-  rightStep.update(sensorReadingFromMask(0), 10, 30);
-  output = rightStep.update(sensorReadingFromMask(0), 10, 40);
-  TEST_ASSERT_EQUAL_INT(Config::CORNER_PIVOT_SPEED, output.leftSpeed);
-  TEST_ASSERT_EQUAL_INT(-Config::CORNER_PIVOT_SPEED, output.rightSpeed);
+  ControlStep step;
+  ControlOutput output = step.update(sensorReadingFromMask(0b01110), 10, 10);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0b01110), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 30);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  output = step.update(sensorReadingFromMask(0), 10, 40);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
 
-  ControlStep leftStep;
-  leftStep.update(sensorReadingFromMask(0b00011), 10, 10);
-  leftStep.update(sensorReadingFromMask(0b01110), 10, 20);
-  leftStep.update(sensorReadingFromMask(0), 10, 30);
-  output = leftStep.update(sensorReadingFromMask(0), 10, 40);
-  TEST_ASSERT_EQUAL_INT(-Config::CORNER_PIVOT_SPEED, output.leftSpeed);
-  TEST_ASSERT_EQUAL_INT(Config::CORNER_PIVOT_SPEED, output.rightSpeed);
+  ControlStep ambiguous;
+  ambiguous.update(sensorReadingFromMask(0b11100), 10, 10);
+  ambiguous.update(sensorReadingFromMask(0b11100), 10, 20);
+  ambiguous.update(sensorReadingFromMask(0b01110), 10, 30);
+  ambiguous.update(sensorReadingFromMask(0), 10, 40);
+  output = ambiguous.update(sensorReadingFromMask(0), 10, 50);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+
+  ControlStep conflicting;
+  conflicting.update(sensorReadingFromMask(0b11100), 10, 10);
+  conflicting.update(sensorReadingFromMask(0b11100), 10, 20);
+  conflicting.update(sensorReadingFromMask(0b00111), 10, 30);
+  output = conflicting.update(sensorReadingFromMask(0), 10, 40);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
 }
 
 void test_pivot_timeout_stops_motors() {
   ControlStep step;
   step.update(sensorReadingFromMask(0b11100), 10, 10);
-  step.update(sensorReadingFromMask(0), 10, 20);
+  step.update(sensorReadingFromMask(0b11100), 10, 20);
+  step.update(sensorReadingFromMask(0), 10, 30);
+  step.update(sensorReadingFromMask(0), 10, 40);
   const uint32_t timeout = Config::CORNER_PIVOT_TIMEOUT_MS;
   ControlOutput output = step.update(sensorReadingFromMask(0), timeout + 1,
-                                     20 + timeout + 1);
+                                     40 + timeout + 1);
   TEST_ASSERT_EQUAL(ControlEvent::PivotTimedOut, output.event);
-  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+  TEST_ASSERT_EQUAL(ControlMode::Lost, output.mode);
   TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
 }
 
@@ -188,7 +306,9 @@ void test_pivot_timeout_handles_millis_wrap_and_exact_boundary() {
   ControlStep step;
   const uint32_t clusterAt = 0xFFFFFF00UL;
   step.update(sensorReadingFromMask(0b11100), 10, clusterAt);
-  const uint32_t pivotAt = clusterAt + 10U;
+  step.update(sensorReadingFromMask(0b11100), 10, clusterAt + 10U);
+  step.update(sensorReadingFromMask(0), 10, clusterAt + 20U);
+  const uint32_t pivotAt = clusterAt + 30U;
   ControlOutput output = step.update(sensorReadingFromMask(0), 10, pivotAt);
   TEST_ASSERT_EQUAL(ControlEvent::PivotStarted, output.event);
 
@@ -200,7 +320,7 @@ void test_pivot_timeout_handles_millis_wrap_and_exact_boundary() {
 
   output = step.update(sensorReadingFromMask(0), 1, pivotAt + timeout + 1U);
   TEST_ASSERT_EQUAL(ControlEvent::PivotTimedOut, output.event);
-  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+  TEST_ASSERT_EQUAL(ControlMode::Lost, output.mode);
   TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
 }
 
@@ -471,10 +591,17 @@ int main(int, char**) {
   RUN_TEST(test_output_is_limited);
   RUN_TEST(test_integral_is_applied_and_reset);
   RUN_TEST(test_derivative_responds_to_error_change);
+  RUN_TEST(test_derivative_filter_reduces_single_sample_sensor_jump);
+  RUN_TEST(test_saturated_controller_does_not_wind_up_integral);
   RUN_TEST(test_sensor_reading_is_derived_from_one_mask);
   RUN_TEST(test_right_cluster_confirms_right_pivot);
   RUN_TEST(test_left_cluster_confirms_left_pivot);
-  RUN_TEST(test_line_loss_coasts_for_grace_then_stops);
+  RUN_TEST(test_line_loss_holds_previous_command_then_stops);
+  RUN_TEST(test_hold_reports_the_last_commanded_motor_speeds);
+  RUN_TEST(test_single_sensor_dropout_preserves_pid_history_and_elapsed_time);
+  RUN_TEST(test_center_wide_cluster_does_not_start_a_corner_pivot);
+  RUN_TEST(test_corner_requires_confirmed_cluster_and_stable_reacquisition);
+  RUN_TEST(test_lost_state_stops_until_line_is_stably_reacquired);
   RUN_TEST(test_right_pivot_ignores_far_left_and_reacquires_center);
   RUN_TEST(test_left_pivot_ignores_far_right_and_reacquires_center);
   RUN_TEST(test_center_cluster_uses_recent_drift_direction);
