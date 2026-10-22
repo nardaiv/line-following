@@ -34,6 +34,13 @@ float LineController::update(float error, float dt) {
   return output;
 }
 
+void LineController::setGains(float kp, float ki, float kd) {
+  kp_ = kp;
+  ki_ = ki;
+  kd_ = kd;
+  reset();
+}
+
 void LineController::reset() {
   integral_ = 0.0f;
   previousError_ = 0.0f;

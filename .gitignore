@@ -1,1 +1,19 @@
 .vscode/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local secrets; keep committed templates such as .env.example.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local-only broker credentials/configuration and generated database files.
+backend/data/
+node_modules/
+hardware/.pio/
+frontend/dist/
+infra/mosquitto/data/
+infra/mosquitto/passwd
+infra/mosquitto/acl
+infra/mosquitto/mosquitto.conf.local

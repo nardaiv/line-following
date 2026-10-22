@@ -35,6 +35,7 @@ constexpr float PID_INTEGRAL_LIMIT = 10.0f;
 // 75 % of the original 100: more cycle-to-cycle sensor consistency at speed.
 constexpr int BASE_SPEED = 75;
 constexpr uint32_t CONTROL_PERIOD_MS = 10;
+constexpr uint32_t CONTROL_DT_MAX_MS = 50;  // bound PID integration after scheduling stalls
 
 // Coast, keeping the last commanded speeds, for this many cycles (~0.5 s)
 // after the line vanishes before accepting a genuine line loss. Sensor
