@@ -1,4 +1,5 @@
 export type ControlMode = 'track' | 'pivot' | 'lost';
+export type ControlSensor = 'none' | 'front' | 'rear';
 export type AckStatus = 'applied' | 'persisted' | 'rejected' | 'failed';
 
 export interface Telemetry {
@@ -10,6 +11,11 @@ export interface Telemetry {
   mask: number;
   position: number | null;
   error: number | null;
+  frontMask: number;
+  frontPosition: number | null;
+  rearMask: number | null;
+  rearPosition: number | null;
+  controlSensor: ControlSensor;
   correction: number;
   leftPwm: number;
   rightPwm: number;
@@ -58,6 +64,7 @@ export const GAIN_LIMITS: Readonly<PidGains>;
 export function chooseRobotId(available: string[], current: string): string;
 export function normalizeTelemetry(value: unknown): Telemetry | null;
 export function getSensorStates(mask: number): boolean[];
+export function hasDualCenterLineCue(frontMask: number, rearMask: number | null): boolean;
 export function getSensorState(mask: number, index: number, hasSample: boolean): 'line' | 'clear' | 'unknown';
 export function parseGainDraft(draft: GainDraft): PidGains | null;
 export function normalizePidState(value: unknown): PidState | null;

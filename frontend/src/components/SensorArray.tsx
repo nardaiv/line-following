@@ -2,16 +2,17 @@ import { getSensorState, getSensorStates } from '../lib/robot-data.js';
 
 const SENSOR_LABELS = ['OUTER L', 'INNER L', 'CENTER', 'INNER R', 'OUTER R'];
 
-export default function SensorArray({ mask, position, stale, hasSample }: {
+export default function SensorArray({ mask, position, stale, hasSample, rowLabel }: {
   mask: number;
   position: number | null;
   stale: boolean;
   hasSample: boolean;
+  rowLabel: string;
 }) {
   const active = getSensorStates(mask);
   const states = active.map((_, index) => getSensorState(mask, index, hasSample));
   return <div className={`sensor-array${stale ? ' sensor-array--stale' : ''}`}>
-    <div className="sensor-array__rail" role="list" aria-label="Five IR sensors, ordered from robot left to right">
+    <div className="sensor-array__rail" role="list" aria-label={`${rowLabel} five IR sensors, ordered from robot left to right`}>
       {active.map((_, index) => <div
         className={`sensor-cell${states[index] === 'line' ? ' sensor-cell--active' : ''}${position !== null && Math.round(position) === index ? ' sensor-cell--position' : ''}`}
         key={index}

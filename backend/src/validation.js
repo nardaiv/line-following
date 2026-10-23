@@ -2,6 +2,7 @@ export const MAX_MQTT_PAYLOAD_BYTES = 512;
 export const PID_GAIN_LIMITS = Object.freeze({ kp: 60, ki: 12, kd: 0.3 });
 
 const CONTROL_MODES = new Set(['track', 'pivot', 'lost']);
+const CONTROL_SENSORS = new Set(['none', 'front', 'rear']);
 const CONTROL_EVENTS = new Set([
   'corner_cluster', 'pivot_started', 'line_reacquired', 'pivot_timeout',
 ]);
@@ -83,6 +84,33 @@ export function parseTelemetry(payload, robotId, receivedAt) {
   if (mask !== 0 && (position === null || error === null)) {
     throw new PayloadError('sensor_position_mismatch');
   }
+  const frontMask = payload.frontMask === undefined
+    ? mask : integer(payload.frontMask, 0, 31, 'front_mask');
+  const frontPosition = payload.frontPosition === undefined
+    ? position : nullableNumber(payload.frontPosition, 0, 4, 'front_position');
+  const rearMask = payload.rearMask === undefined || payload.rearMask === null
+    ? null : integer(payload.rearMask, 0, 31, 'rear_mask');
+  const rearPosition = payload.rearPosition === undefined
+    ? null : nullableNumber(payload.rearPosition, 0, 4, 'rear_position');
+  if ((frontMask === 0) !== (frontPosition === null) ||
+      (rearMask === null && rearPosition !== null) ||
+      (rearMask !== null && (rearMask === 0) !== (rearPosition === null))) {
+    throw new PayloadError('sensor_row_position_mismatch');
+  }
+  const controlSensorExplicit = payload.controlSensor !== undefined;
+  const controlSensor = payload.controlSensor === undefined
+    ? (mask === 0 ? 'none' : 'front') : text(payload.controlSensor, 5, 'control_sensor');
+  if (!CONTROL_SENSORS.has(controlSensor)) throw new PayloadError('invalid_control_sensor');
+  if ((controlSensor === 'none' &&
+       (mask !== 0 || frontMask !== 0 || (rearMask !== null && rearMask !== 0) ||
+        (controlSensorExplicit && rearMask !== 0))) ||
+      (controlSensor === 'front' &&
+       (mask === 0 || mask !== frontMask || position !== frontPosition)) ||
+      (controlSensor === 'rear' &&
+       (frontMask !== 0 || rearMask === null || mask === 0 || mask !== rearMask ||
+        position !== rearPosition))) {
+    throw new PayloadError('control_sensor_mismatch');
+  }
   const mode = text(payload.mode, 8, 'mode');
   if (!CONTROL_MODES.has(mode)) throw new PayloadError('invalid_mode');
   return {
@@ -94,6 +122,11 @@ export function parseTelemetry(payload, robotId, receivedAt) {
     mask,
     position,
     error,
+    frontMask,
+    frontPosition,
+    rearMask,
+    rearPosition,
+    controlSensor,
     correction: finiteNumber(payload.correction, -120, 120, 'correction'),
     leftPwm: integer(payload.leftPwm, -180, 180, 'left_pwm'),
     rightPwm: integer(payload.rightPwm, -180, 180, 'right_pwm'),

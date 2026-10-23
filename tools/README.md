@@ -25,8 +25,9 @@ network settings and PID data. On Windows, specify the COM port (for example
 `COM5`). The utility opens the serial port and then explicitly asks you to
 press and release the board's EN/RESET button before it sends a command; opening
 the USB serial port alone is not guaranteed to reset every USB-UART adapter.
-The non-secret `INFO` response includes a one-time five-bit sensor mask snapshot
-(`sensorMask`, bit 0 = robot-left); take it with the robot safely supported.
+The non-secret `INFO` response includes one-time five-bit front and rear mask
+snapshots (`sensorMask` and `rearSensorMask`; bit 0 = robot-left on both rows);
+take them with the robot safely supported.
 
 On every boot, the firmware holds the motors in standby for a five-second USB
 provisioning window. Missing network settings keep it in standby after that
@@ -38,7 +39,7 @@ connecting and provisioning. Once the window closes, use MQTT for tuning; USB
 changes require a serial reconnect/reboot. The firmware does not echo the SSID,
 Wi-Fi password, MQTT username, or MQTT password; `INFO` only shows whether
 configuration exists, robot ID, broker host/port, PID values, revision and the
-current five-bit line-detection mask.
+current front/rear five-bit line-detection masks.
 
 The serial protocol is newline-delimited ASCII. `CFG` fields are hex-encoded to
 avoid delimiter/newline injection; do not send secrets in command-line

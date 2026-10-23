@@ -6,6 +6,6 @@ class LineSensor {
  public:
   void begin();
 
-  // Samples every digital input once; position and presence come from that mask.
-  SensorReading read();
+  // Samples both digital rows once and derives positions from those masks.
+  SensorFrame read();
 };

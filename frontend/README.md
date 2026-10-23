@@ -15,7 +15,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api` and `/health` to the loopback backend at `127.0.0.1:3000`; no browser MQTT credentials or broker connection are used. Enter the local backend `ADMIN_TOKEN` in the PID panel before submitting gains. The UI displays device-confirmed gains separately from the editable draft and reports `pending`, `applied`, `persisted`, `rejected` or failed states.
 
-The UI shows the five digital IR bits left-to-right (bit 0 is robot-left), line position/error, PID correction, signed motor PWM, mode, control period, drop counts, Wi-Fi/MQTT status, and a bounded recent telemetry history. Data is marked stale after 2.5 seconds without a sample.
+The UI shows separate front and rear five-bit digital IR rows, ordered left-to-right (bit 0 is robot-left on both rows), plus line position/error, the selected control row, a straightness cue when both center sensors detect the line, PID correction, signed motor PWM, mode, control period, drop counts, Wi-Fi/MQTT status, and a bounded recent telemetry history. The cue is informational only. Legacy single-row telemetry is displayed as front-only. Data is marked stale after 2.5 seconds without a sample.
 
 ## Checks and build
 

@@ -151,8 +151,8 @@ void controlTask(void* argument) {
       pidDtMs = Config::CONTROL_DT_MAX_MS;
     }
 
-    const SensorReading reading = context->lineSensor->read();
-    const ControlOutput output = control.update(reading, pidDtMs, nowMs);
+    const SensorFrame frame = context->lineSensor->read();
+    const ControlOutput output = control.update(frame, pidDtMs, nowMs);
     applyMotorOutput(*context->motorDriver, motorsEnabled, output);
     const uint32_t sampleSequence = ++sequence;
 
@@ -160,9 +160,9 @@ void controlTask(void* argument) {
       ControlEventSnapshot event = {};
       event.sequence = sampleSequence;
       event.uptimeMs = nowMs;
-      event.mask = reading.mask;
-      event.hasLine = reading.hasLine;
-      event.position = reading.position;
+      event.mask = output.mask;
+      event.hasLine = output.hasLine;
+      event.position = output.position;
       event.mode = output.mode;
       event.event = output.event;
       if (xQueueSend(context->eventQueue, &event, 0) != pdPASS) {
@@ -180,9 +180,9 @@ void controlTask(void* argument) {
       snapshot.sequence = sampleSequence;
       snapshot.uptimeMs = telemetryNowMs;
       snapshot.dtMs = elapsedMs;
-      snapshot.mask = reading.mask;
-      snapshot.hasLine = reading.hasLine;
-      snapshot.position = reading.position;
+      snapshot.mask = output.mask;
+      snapshot.hasLine = output.hasLine;
+      snapshot.position = output.position;
       snapshot.error = output.error;
       snapshot.correction = output.correction;
       snapshot.leftPwm = static_cast<int16_t>(output.leftSpeed);
@@ -192,6 +192,13 @@ void controlTask(void* argument) {
       snapshot.droppedFrames = droppedFrames;
       snapshot.droppedAcks = readAckQueueDrops(context);
       snapshot.droppedEvents = readEventDrops(context);
+      snapshot.frontMask = output.frontMask;
+      snapshot.frontHasLine = output.frontHasLine;
+      snapshot.frontPosition = output.frontPosition;
+      snapshot.rearMask = output.rearMask;
+      snapshot.rearHasLine = output.rearHasLine;
+      snapshot.rearPosition = output.rearPosition;
+      snapshot.controlSensor = output.controlSensor;
       xQueueOverwrite(context->telemetryQueue, &snapshot);
     }
   }

@@ -21,3 +21,10 @@ SensorReading sensorReadingFromMask(uint8_t mask) {
                           : 0.0f;
   return reading;
 }
+
+SensorFrame sensorFrameFromMasks(uint8_t frontMask, uint8_t rearMask) {
+  SensorFrame frame;
+  frame.front = sensorReadingFromMask(frontMask);
+  frame.rear = sensorReadingFromMask(rearMask);
+  return frame;
+}

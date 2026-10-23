@@ -32,6 +32,7 @@ bool settingsConfigured() {
 }
 
 void printInfo() {
+  const SensorFrame frame = lineSensor.read();
   Serial.print("INFO|configured=");
   Serial.print(settingsConfigured() ? 1 : 0);
   if (settingsConfigured()) {
@@ -51,7 +52,9 @@ void printInfo() {
   Serial.print("|revision=");
   Serial.print(runtimeContext.initialPid.revision);
   Serial.print("|sensorMask=");
-  Serial.println(lineSensor.read().mask);
+  Serial.print(frame.front.mask);
+  Serial.print("|rearSensorMask=");
+  Serial.println(frame.rear.mask);
 }
 
 bool commitPidConfig(PidConfig candidate) {

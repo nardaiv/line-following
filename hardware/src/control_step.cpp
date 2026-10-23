@@ -46,7 +46,23 @@ ClusterSide classifyCluster(uint8_t mask) {
   return ClusterSide::Unknown;
 }
 
-ControlOutput makeOutput(const SensorReading& reading, ControlMode mode) {
+ClusterSide classifyFrontCluster(const SensorFrame& frame) {
+  return classifyCluster(frame.front.mask);
+}
+
+ControlSensor selectControlSensor(const SensorFrame& frame) {
+  if (frame.front.hasLine) return ControlSensor::Front;
+  if (frame.rear.hasLine) return ControlSensor::Rear;
+  return ControlSensor::None;
+}
+
+const SensorReading& selectedReading(const SensorFrame& frame,
+                                     ControlSensor selected) {
+  return selected == ControlSensor::Rear ? frame.rear : frame.front;
+}
+
+ControlOutput makeOutput(const SensorReading& reading, const SensorFrame& frame,
+                         ControlSensor selected, ControlMode mode) {
   ControlOutput output;
   output.mode = mode;
   output.event = ControlEvent::None;
@@ -58,6 +74,13 @@ ControlOutput makeOutput(const SensorReading& reading, ControlMode mode) {
   output.correction = 0.0f;
   output.leftSpeed = 0;
   output.rightSpeed = 0;
+  output.frontMask = frame.front.mask;
+  output.frontHasLine = frame.front.hasLine;
+  output.frontPosition = frame.front.position;
+  output.rearMask = frame.rear.mask;
+  output.rearHasLine = frame.rear.hasLine;
+  output.rearPosition = frame.rear.position;
+  output.controlSensor = selected;
   return output;
 }
 
@@ -79,7 +102,8 @@ ControlStep::ControlStep()
       reacquireCycles_(0),
       pidElapsedMs_(0),
       lastLeftSpeed_(0),
-      lastRightSpeed_(0) {}
+      lastRightSpeed_(0),
+      lastControlSensor_(ControlSensor::None) {}
 
 bool ControlStep::configurePid(const PidConfig& config) {
   if (!isPidConfigValid(config)) return false;
@@ -87,12 +111,23 @@ bool ControlStep::configurePid(const PidConfig& config) {
   return true;
 }
 
-ControlOutput ControlStep::update(const SensorReading& reading,
+ControlOutput ControlStep::update(const SensorReading& frontReading,
                                   uint32_t elapsedMs, uint32_t nowMs) {
-  ControlOutput output = makeOutput(reading, mode_);
+  SensorFrame frame;
+  frame.front = frontReading;
+  frame.rear = sensorReadingFromMask(0);
+  return update(frame, elapsedMs, nowMs);
+}
+
+ControlOutput ControlStep::update(const SensorFrame& frame,
+                                  uint32_t elapsedMs, uint32_t nowMs) {
+  const ControlSensor selected = selectControlSensor(frame);
+  const SensorReading& reading = selectedReading(frame, selected);
+  const bool linePresent = selected != ControlSensor::None;
+  ControlOutput output = makeOutput(reading, frame, selected, mode_);
 
   if (mode_ == ControlMode::Lost) {
-    if (reading.mask != 0) {
+    if (linePresent) {
       if (reacquireCycles_ < Config::LINE_REACQUIRE_CONFIRM_CYCLES) {
         ++reacquireCycles_;
       }
@@ -106,6 +141,7 @@ ControlOutput ControlStep::update(const SensorReading& reading,
         reacquireCycles_ = 0;
         pidElapsedMs_ = 0;
         controller_.reset();
+        lastControlSensor_ = selected;
         output.mode = ControlMode::Track;
         output.event = ControlEvent::LineReacquired;
         output.motorAction = MotorAction::Stop;
@@ -124,9 +160,9 @@ ControlOutput ControlStep::update(const SensorReading& reading,
   }
 
   if (mode_ == ControlMode::Pivot) {
-    if (reading.mask != 0) {
-      const bool onInnerSide = pivotRight_ ? reading.position >= 1.5f
-                                           : reading.position <= 2.5f;
+    if (frame.front.hasLine) {
+      const bool onInnerSide = pivotRight_ ? frame.front.position >= 1.5f
+                                           : frame.front.position <= 2.5f;
       if (onInnerSide) {
         if (reacquireCycles_ < Config::LINE_REACQUIRE_CONFIRM_CYCLES) {
           ++reacquireCycles_;
@@ -144,6 +180,7 @@ ControlOutput ControlStep::update(const SensorReading& reading,
         reacquireCycles_ = 0;
         pidElapsedMs_ = 0;
         controller_.reset();
+        lastControlSensor_ = ControlSensor::Front;
         output.mode = ControlMode::Track;
         output.event = ControlEvent::LineReacquired;
         output.motorAction = MotorAction::Stop;
@@ -163,6 +200,7 @@ ControlOutput ControlStep::update(const SensorReading& reading,
       lossCycles_ = 0;
       pidElapsedMs_ = 0;
       controller_.reset();
+      lastControlSensor_ = ControlSensor::None;
       output.mode = ControlMode::Lost;
       output.event = ControlEvent::PivotTimedOut;
       output.motorAction = MotorAction::Stop;
@@ -181,39 +219,42 @@ ControlOutput ControlStep::update(const SensorReading& reading,
     return output;
   }
 
-  if (reading.mask == 0) {
-    if (cornerConfirmed_ &&
-        cyclesSinceCluster_ <= Config::CORNER_RECENT_CYCLES) {
-      if (zeroMaskCycles_ < Config::CORNER_BLACKOUT_CONFIRM_CYCLES) {
-        ++zeroMaskCycles_;
-      }
-      if (zeroMaskCycles_ >= Config::CORNER_BLACKOUT_CONFIRM_CYCLES) {
-        pivotRight_ = clusterSideRight_;
-        pivotStartMs_ = nowMs;
-        mode_ = ControlMode::Pivot;
-        reacquireCycles_ = 0;
-        pidElapsedMs_ = 0;
-        controller_.reset();
-        output.mode = ControlMode::Pivot;
-        output.event = ControlEvent::PivotStarted;
-        output.motorAction = MotorAction::Drive;
-        output.leftSpeed = pivotRight_ ? Config::CORNER_PIVOT_SPEED
-                                       : -Config::CORNER_PIVOT_SPEED;
-        output.rightSpeed = -output.leftSpeed;
-        lastLeftSpeed_ = output.leftSpeed;
-        lastRightSpeed_ = output.rightSpeed;
-        return output;
-      }
-      output.motorAction = MotorAction::Hold;
-      output.leftSpeed = lastLeftSpeed_;
-      output.rightSpeed = lastRightSpeed_;
-      pidElapsedMs_ += elapsedMs;
-      if (pidElapsedMs_ > Config::CONTROL_DT_MAX_MS) {
-        pidElapsedMs_ = Config::CONTROL_DT_MAX_MS;
-      }
+  // After a confirmed front-row corner, front loss starts the turn even if
+  // the rear row still sees the old straight segment.
+  if (!frame.front.hasLine && cornerConfirmed_ &&
+      cyclesSinceCluster_ <= Config::CORNER_RECENT_CYCLES) {
+    if (zeroMaskCycles_ < Config::CORNER_BLACKOUT_CONFIRM_CYCLES) {
+      ++zeroMaskCycles_;
+    }
+    if (zeroMaskCycles_ >= Config::CORNER_BLACKOUT_CONFIRM_CYCLES) {
+      pivotRight_ = clusterSideRight_;
+      pivotStartMs_ = nowMs;
+      mode_ = ControlMode::Pivot;
+      reacquireCycles_ = 0;
+      pidElapsedMs_ = 0;
+      controller_.reset();
+      lastControlSensor_ = ControlSensor::None;
+      output.mode = ControlMode::Pivot;
+      output.event = ControlEvent::PivotStarted;
+      output.motorAction = MotorAction::Drive;
+      output.leftSpeed = pivotRight_ ? Config::CORNER_PIVOT_SPEED
+                                     : -Config::CORNER_PIVOT_SPEED;
+      output.rightSpeed = -output.leftSpeed;
+      lastLeftSpeed_ = output.leftSpeed;
+      lastRightSpeed_ = output.rightSpeed;
       return output;
     }
+    output.motorAction = MotorAction::Hold;
+    output.leftSpeed = lastLeftSpeed_;
+    output.rightSpeed = lastRightSpeed_;
+    pidElapsedMs_ += elapsedMs;
+    if (pidElapsedMs_ > Config::CONTROL_DT_MAX_MS) {
+      pidElapsedMs_ = Config::CONTROL_DT_MAX_MS;
+    }
+    return output;
+  }
 
+  if (!linePresent) {
     if (lossCycles_ < Config::LINE_LOSS_GRACE_CYCLES) {
       ++lossCycles_;
       output.motorAction = MotorAction::Hold;
@@ -234,6 +275,7 @@ ControlOutput ControlStep::update(const SensorReading& reading,
     reacquireCycles_ = 0;
     pidElapsedMs_ = 0;
     controller_.reset();
+    lastControlSensor_ = ControlSensor::None;
     output.mode = ControlMode::Lost;
     output.motorAction = MotorAction::Stop;
     lastLeftSpeed_ = 0;
@@ -253,7 +295,7 @@ ControlOutput ControlStep::update(const SensorReading& reading,
     }
   }
 
-  const ClusterSide side = classifyCluster(reading.mask);
+  const ClusterSide side = classifyFrontCluster(frame);
   if (side == ClusterSide::Left || side == ClusterSide::Right) {
     const bool candidateRight = side == ClusterSide::Right;
     if (cornerConfirmed_ && clusterSideRight_ != candidateRight) {
@@ -283,6 +325,15 @@ ControlOutput ControlStep::update(const SensorReading& reading,
       cyclesSinceCluster_ = NO_RECENT_CLUSTER;
     }
   }
+
+  if (lastControlSensor_ != ControlSensor::None &&
+      lastControlSensor_ != selected) {
+    // The two rows may observe different positions during a turn. Avoid a
+    // derivative kick when switching the measurement source.
+    controller_.reset();
+    pidElapsedMs_ = 0;
+  }
+  lastControlSensor_ = selected;
 
   const float center = (Config::SENSOR_COUNT - 1) / 2.0f;
   const float error = reading.position - center;

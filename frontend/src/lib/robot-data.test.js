@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   getSensorStates,
   getSensorState,
+  hasDualCenterLineCue,
   chooseRobotId,
   normalizePidAck,
   normalizePidState,
@@ -51,6 +52,123 @@ test('normalizes database telemetry fields into dashboard telemetry', () => {
   assert.equal(telemetry.droppedFrames, 2);
 });
 
+test('normalizes both sensor rows while treating old records as front-only', () => {
+  const legacy = normalizeTelemetry(databaseRow);
+  assert.deepEqual(
+    [legacy.frontMask, legacy.frontPosition, legacy.rearMask,
+      legacy.rearPosition, legacy.controlSensor],
+    [5, 1, null, null, 'front'],
+  );
+
+  const dual = normalizeTelemetry({
+    ...databaseRow,
+    mask: 4,
+    position: 2,
+    error: 0,
+    front_mask: 4,
+    front_position: 2,
+    rear_mask: 8,
+    rear_position: 3,
+    control_sensor: 'front',
+  });
+  assert.deepEqual(
+    [dual.frontMask, dual.frontPosition, dual.rearMask,
+      dual.rearPosition, dual.controlSensor],
+    [4, 2, 8, 3, 'front'],
+  );
+  const rearFallback = normalizeTelemetry({
+    ...databaseRow,
+    mask: 8,
+    position: 3,
+    error: 1,
+    front_mask: 0,
+    front_position: null,
+    rear_mask: 8,
+    rear_position: 3,
+    control_sensor: 'rear',
+  });
+  assert.equal(rearFallback.controlSensor, 'rear');
+  assert.equal(rearFallback.frontPosition, null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow, front_mask: 0, front_position: 2,
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 8,
+    position: 3,
+    error: 1,
+    front_mask: 4,
+    front_position: 2,
+    rear_mask: 8,
+    rear_position: 3,
+    control_sensor: 'rear',
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 0,
+    position: null,
+    error: null,
+    front_mask: 4,
+    front_position: 2,
+    rear_mask: 0,
+    rear_position: null,
+    control_sensor: 'none',
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 0,
+    position: null,
+    error: null,
+    front_mask: 0,
+    front_position: null,
+    rear_mask: 8,
+    rear_position: 3,
+    control_sensor: 'none',
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 0,
+    position: null,
+    error: null,
+    front_mask: 0,
+    front_position: null,
+    control_sensor: 'none',
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 0,
+    position: null,
+    error: null,
+    front_mask: 0,
+    front_position: null,
+    rear_mask: null,
+    rear_position: null,
+    control_sensor: 'none',
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 4,
+    position: 1,
+    error: -1,
+    front_mask: 4,
+    front_position: 2,
+    rear_mask: 0,
+    rear_position: null,
+    control_sensor: 'front',
+  }), null);
+  assert.equal(normalizeTelemetry({
+    ...databaseRow,
+    mask: 8,
+    position: 1,
+    error: -1,
+    front_mask: 0,
+    front_position: null,
+    rear_mask: 8,
+    rear_position: 3,
+    control_sensor: 'rear',
+  }), null);
+});
+
 test('normalizes live MQTT telemetry and nullable lost-line readings', () => {
   const live = normalizeTelemetry({
     robotId: 'linebot-01', bootId: 'boot-b', seq: 6,
@@ -74,6 +192,15 @@ test('sensor state is unknown until telemetry has been received', () => {
   assert.equal(getSensorState(0, 0, true), 'clear');
   assert.equal(getSensorState(1, 0, true), 'line');
   assert.equal(getSensorState(1, 5, true), 'unknown');
+});
+
+test('straightness cue requires both front and rear center sensors to see line', () => {
+  assert.equal(hasDualCenterLineCue(0b00100, 0b00100), true);
+  assert.equal(hasDualCenterLineCue(0b01100, 0b00100), true);
+  assert.equal(hasDualCenterLineCue(0b00100, 0), false);
+  assert.equal(hasDualCenterLineCue(0, 0b00100), false);
+  assert.equal(hasDualCenterLineCue(0b00100, null), false);
+  assert.equal(hasDualCenterLineCue(32, 0b00100), false);
 });
 
 test('PID draft parsing accepts finite bounded gains and rejects invalid values', () => {

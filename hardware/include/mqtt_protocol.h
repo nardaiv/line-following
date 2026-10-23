@@ -37,6 +37,13 @@ struct TelemetrySnapshot {
   uint32_t droppedFrames;
   uint32_t droppedAcks;
   uint32_t droppedEvents;
+  uint8_t frontMask;
+  bool frontHasLine;
+  float frontPosition;
+  uint8_t rearMask;
+  bool rearHasLine;
+  float rearPosition;
+  ControlSensor controlSensor;
 };
 
 struct ControlEventSnapshot {

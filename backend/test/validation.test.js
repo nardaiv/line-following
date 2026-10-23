@@ -42,6 +42,82 @@ test('telemetry validates and preserves device sequence/time separately', () => 
   assert.equal(row.mask, 4);
 });
 
+test('telemetry preserves dual front/rear sensor rows and accepts legacy payloads', () => {
+  const dual = parseTelemetry({
+    ...telemetry,
+    frontMask: 4,
+    frontPosition: 2,
+    rearMask: 8,
+    rearPosition: 3,
+    controlSensor: 'front',
+  }, 'linebot-01', receivedAt);
+  assert.deepEqual(
+    [dual.frontMask, dual.frontPosition, dual.rearMask, dual.rearPosition, dual.controlSensor],
+    [4, 2, 8, 3, 'front'],
+  );
+  const rearFallback = parseTelemetry({
+    ...telemetry,
+    mask: 8,
+    position: 3,
+    error: 1,
+    frontMask: 0,
+    frontPosition: null,
+    rearMask: 8,
+    rearPosition: 3,
+    controlSensor: 'rear',
+  }, 'linebot-01', receivedAt);
+  assert.equal(rearFallback.controlSensor, 'rear');
+  assert.equal(rearFallback.frontPosition, null);
+
+  const legacy = parseTelemetry(telemetry, 'linebot-01', receivedAt);
+  assert.deepEqual(
+    [legacy.frontMask, legacy.frontPosition, legacy.rearMask, legacy.rearPosition,
+      legacy.controlSensor],
+    [4, 2, null, null, 'front'],
+  );
+  assert.throws(() => parseTelemetry({
+    ...telemetry, frontMask: 0, frontPosition: 2,
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, rearMask: 8, rearPosition: null, controlSensor: 'rear',
+    mask: 8, position: 3, error: 1,
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 8, position: 3, error: 1,
+    frontMask: 4, frontPosition: 2, rearMask: 8, rearPosition: 3,
+    controlSensor: 'rear',
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 0, position: null, error: null,
+    frontMask: 4, frontPosition: 2, rearMask: 0, rearPosition: null,
+    controlSensor: 'none',
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 0, position: null, error: null,
+    frontMask: 0, frontPosition: null, rearMask: 8, rearPosition: 3,
+    controlSensor: 'none',
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 0, position: null, error: null,
+    frontMask: 0, frontPosition: null, controlSensor: 'none',
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 0, position: null, error: null,
+    frontMask: 0, frontPosition: null, rearMask: null, rearPosition: null,
+    controlSensor: 'none',
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 4, position: 1, error: -1,
+    frontMask: 4, frontPosition: 2, rearMask: 0, rearPosition: null,
+    controlSensor: 'front',
+  }, 'linebot-01', receivedAt), PayloadError);
+  assert.throws(() => parseTelemetry({
+    ...telemetry, mask: 8, position: 1, error: -1,
+    frontMask: 0, frontPosition: null, rearMask: 8, rearPosition: 3,
+    controlSensor: 'rear',
+  }, 'linebot-01', receivedAt), PayloadError);
+});
+
 test('telemetry rejects robot mismatch and impossible sensor data', () => {
   assert.throws(() => parseTelemetry(telemetry, 'other', receivedAt), PayloadError);
   assert.throws(() => parseTelemetry({ ...telemetry, mask: 0 }, 'linebot-01', receivedAt), PayloadError);

@@ -81,12 +81,110 @@ void test_sensor_reading_is_derived_from_one_mask() {
   }
 }
 
+void test_sensor_frame_preserves_front_and_rear_rows() {
+  const SensorFrame frame = sensorFrameFromMasks(0b00100, 0b01000);
+  TEST_ASSERT_EQUAL_UINT8(0b00100, frame.front.mask);
+  TEST_ASSERT_EQUAL_UINT8(0b01000, frame.rear.mask);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, frame.front.position);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.0f, frame.rear.position);
+}
+
+void test_corner_cluster_confirms_on_first_sample() {
+  ControlStep step;
+  const ControlOutput output =
+      step.update(sensorReadingFromMask(0b11100), 10, 10);
+  TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+}
+
+void test_single_cluster_sample_and_confirmed_blackout_complete_corner_flow() {
+  ControlStep step;
+  ControlOutput output =
+      step.update(sensorFrameFromMasks(0b11100, 0), 10, 10);
+  TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
+
+  output = step.update(sensorFrameFromMasks(0, 0), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(MotorAction::Hold, output.motorAction);
+  output = step.update(sensorFrameFromMasks(0, 0), 10, 30);
+  TEST_ASSERT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
+
+  output = step.update(sensorFrameFromMasks(0b00100, 0), 10, 40);
+  TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::LineReacquired, output.event);
+  output = step.update(sensorFrameFromMasks(0b00100, 0), 10, 50);
+  TEST_ASSERT_EQUAL(ControlEvent::LineReacquired, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+  TEST_ASSERT_EQUAL(MotorAction::Stop, output.motorAction);
+}
+
+void test_rear_only_cluster_does_not_latch_a_turn() {
+  ControlStep step;
+  const SensorFrame frame = sensorFrameFromMasks(0b00100, 0b11100);
+  ControlOutput output = step.update(frame, 10, 10);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(frame, 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+}
+
+void test_front_blackout_starts_confirmed_turn_while_rear_still_sees_line() {
+  ControlStep step;
+  ControlOutput output =
+      step.update(sensorFrameFromMasks(0b11100, 0b00100), 10, 10);
+  TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
+
+  output = step.update(sensorFrameFromMasks(0, 0b00100), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(MotorAction::Hold, output.motorAction);
+  output = step.update(sensorFrameFromMasks(0, 0b00100), 10, 30);
+  TEST_ASSERT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Pivot, output.mode);
+}
+
+void test_rear_gpio_order_matches_robot_left_to_right_mapping() {
+  const uint8_t expectedPins[Config::SENSOR_COUNT] = {21, 47, 9, 8, 18};
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedPins, Config::REAR_SENSOR_PINS,
+                                Config::SENSOR_COUNT);
+}
+
+void test_control_uses_front_for_lookahead_and_rear_if_front_loses_line() {
+  ControlStep step;
+  ControlOutput output = step.update(sensorFrameFromMasks(0b00100, 0b10000), 10, 10);
+  TEST_ASSERT_EQUAL(ControlSensor::Front, output.controlSensor);
+  TEST_ASSERT_EQUAL_UINT8(0b00100, output.frontMask);
+  TEST_ASSERT_EQUAL_UINT8(0b10000, output.rearMask);
+  TEST_ASSERT_EQUAL_UINT8(0b00100, output.mask);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, output.position);
+
+  output = step.update(sensorFrameFromMasks(0, 0b10000), 10, 20);
+  TEST_ASSERT_EQUAL(ControlSensor::Rear, output.controlSensor);
+  TEST_ASSERT_EQUAL_UINT8(0, output.frontMask);
+  TEST_ASSERT_EQUAL_UINT8(0b10000, output.rearMask);
+  TEST_ASSERT_EQUAL_UINT8(0b10000, output.mask);
+  TEST_ASSERT_TRUE(output.hasLine);
+}
+
+void test_rear_row_cluster_does_not_select_corner_direction() {
+  ControlStep step;
+  ControlOutput output =
+      step.update(sensorFrameFromMasks(0b00100, 0b11100), 10, 10);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorFrameFromMasks(0b00100, 0b11100), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
+  step.update(sensorFrameFromMasks(0, 0), 10, 30);
+  output = step.update(sensorFrameFromMasks(0, 0), 10, 40);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
+  TEST_ASSERT_EQUAL(ControlMode::Track, output.mode);
+  TEST_ASSERT_EQUAL(MotorAction::Hold, output.motorAction);
+}
+
 void test_right_cluster_confirms_right_pivot() {
   ControlStep step;
   ControlOutput output = step.update(sensorReadingFromMask(0b11100), 10, 10);
-  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
-  output = step.update(sensorReadingFromMask(0b11100), 10, 20);
   TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0b11100), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
 
   output = step.update(sensorReadingFromMask(0), 10, 30);
   TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
@@ -169,9 +267,9 @@ void test_center_wide_cluster_does_not_start_a_corner_pivot() {
 void test_corner_requires_confirmed_cluster_and_stable_reacquisition() {
   ControlStep step;
   ControlOutput output = step.update(sensorReadingFromMask(0b11100), 10, 10);
-  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
-  output = step.update(sensorReadingFromMask(0b11100), 10, 20);
   TEST_ASSERT_EQUAL(ControlEvent::CornerCluster, output.event);
+  output = step.update(sensorReadingFromMask(0b11100), 10, 20);
+  TEST_ASSERT_NOT_EQUAL(ControlEvent::CornerCluster, output.event);
   output = step.update(sensorReadingFromMask(0), 10, 30);
   TEST_ASSERT_NOT_EQUAL(ControlEvent::PivotStarted, output.event);
   output = step.update(sensorReadingFromMask(0), 10, 40);
@@ -521,10 +619,16 @@ void test_mqtt_telemetry_state_and_ack_payloads_serialize() {
   telemetry.droppedFrames = 3;
   telemetry.droppedAcks = 2;
   telemetry.droppedEvents = 1;
+  telemetry.frontMask = 0b00100;
+  telemetry.frontHasLine = true;
+  telemetry.frontPosition = 2.0f;
+  telemetry.rearMask = 0;
+  telemetry.rearHasLine = false;
+  telemetry.controlSensor = ControlSensor::Front;
   size_t length = encodeTelemetryPayload("linebot-01", "boot-a1", telemetry,
                                          payload, sizeof(payload));
   TEST_ASSERT_GREATER_THAN_UINT32(0, length);
-  StaticJsonDocument<640> document;
+  StaticJsonDocument<768> document;
   TEST_ASSERT_FALSE(deserializeJson(document, payload, length));
   TEST_ASSERT_EQUAL_STRING("linebot-01", document["robotId"]);
   TEST_ASSERT_EQUAL_STRING("boot-a1", document["bootId"]);
@@ -533,6 +637,11 @@ void test_mqtt_telemetry_state_and_ack_payloads_serialize() {
   TEST_ASSERT_EQUAL_UINT32(3, document["droppedFrames"]);
   TEST_ASSERT_EQUAL_UINT32(2, document["droppedAcks"]);
   TEST_ASSERT_EQUAL_UINT32(1, document["droppedEvents"]);
+  TEST_ASSERT_EQUAL_UINT8(0b00100, document["frontMask"]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.0f, document["frontPosition"]);
+  TEST_ASSERT_EQUAL_UINT8(0, document["rearMask"]);
+  TEST_ASSERT_TRUE(document["rearPosition"].isNull());
+  TEST_ASSERT_EQUAL_STRING("front", document["controlSensor"]);
 
   ControlEventSnapshot event = {};
   event.sequence = 8;
@@ -594,6 +703,14 @@ int main(int, char**) {
   RUN_TEST(test_derivative_filter_reduces_single_sample_sensor_jump);
   RUN_TEST(test_saturated_controller_does_not_wind_up_integral);
   RUN_TEST(test_sensor_reading_is_derived_from_one_mask);
+  RUN_TEST(test_sensor_frame_preserves_front_and_rear_rows);
+  RUN_TEST(test_corner_cluster_confirms_on_first_sample);
+  RUN_TEST(test_single_cluster_sample_and_confirmed_blackout_complete_corner_flow);
+  RUN_TEST(test_rear_gpio_order_matches_robot_left_to_right_mapping);
+  RUN_TEST(test_control_uses_front_for_lookahead_and_rear_if_front_loses_line);
+  RUN_TEST(test_rear_only_cluster_does_not_latch_a_turn);
+  RUN_TEST(test_front_blackout_starts_confirmed_turn_while_rear_still_sees_line);
+  RUN_TEST(test_rear_row_cluster_does_not_select_corner_direction);
   RUN_TEST(test_right_cluster_confirms_right_pivot);
   RUN_TEST(test_left_cluster_confirms_left_pivot);
   RUN_TEST(test_line_loss_holds_previous_command_then_stops);

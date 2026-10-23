@@ -6,20 +6,35 @@ namespace Config {
 
 constexpr uint32_t SERIAL_BAUD = 115200;
 
-// Five HW-871 digital outputs, ordered from the robot's left to right.
+// Front and rear HW-871 rows, each ordered from the robot's left to right.
 constexpr uint8_t SENSOR_COUNT = 5;
-static const uint8_t SENSOR_PINS[SENSOR_COUNT] = {36, 37, 38, 39, 40};
+
+// static const uint8_t FRONT_SENSOR_PINS[SENSOR_COUNT] = {36, 37, 38, 39, 40};
+static const uint8_t FRONT_SENSOR_PINS[SENSOR_COUNT] = {40, 39, 38, 37, 36};
+
+// Rear row GPIOs supplied for this robot, left to right: 21, 47, 9, 8, 18.
+static const uint8_t REAR_SENSOR_PINS[SENSOR_COUNT] = {21, 47, 9, 8, 18};
+// The rows are approximately 20 mm apart longitudinally; verify the mounted
+// distance before using it for geometric heading compensation.
+constexpr uint16_t SENSOR_ROW_SEPARATION_MM = 20;
 // Most HW-871 boards report LOW when a sensor detects the line. Change this
-// to false if your board reports HIGH over the line.
-constexpr bool SENSOR_LINE_ACTIVE_LOW = true;
+// per row if the installed board reports HIGH over the line.
+constexpr bool FRONT_SENSOR_LINE_ACTIVE_LOW = true;
+constexpr bool REAR_SENSOR_LINE_ACTIVE_LOW = true;
 
 // TB6612FNG: motor A is left; motor B is right. Avoid S3 USB and strapping pins.
-constexpr uint8_t LEFT_MOTOR_IN1_PIN = 11;
-constexpr uint8_t LEFT_MOTOR_IN2_PIN = 12;
-constexpr uint8_t LEFT_MOTOR_PWM_PIN = 13;
-constexpr uint8_t RIGHT_MOTOR_IN1_PIN = 14;
-constexpr uint8_t RIGHT_MOTOR_IN2_PIN = 15;
-constexpr uint8_t RIGHT_MOTOR_PWM_PIN = 16;
+// constexpr uint8_t LEFT_MOTOR_IN1_PIN = 11;
+// constexpr uint8_t LEFT_MOTOR_IN2_PIN = 12;
+// constexpr uint8_t LEFT_MOTOR_PWM_PIN = 13;
+// constexpr uint8_t RIGHT_MOTOR_IN1_PIN = 14;
+// constexpr uint8_t RIGHT_MOTOR_IN2_PIN = 15;
+// constexpr uint8_t RIGHT_MOTOR_PWM_PIN = 16;
+constexpr uint8_t LEFT_MOTOR_IN1_PIN = 14;
+constexpr uint8_t LEFT_MOTOR_IN2_PIN = 15;
+constexpr uint8_t LEFT_MOTOR_PWM_PIN = 16;
+constexpr uint8_t RIGHT_MOTOR_IN1_PIN = 11;
+constexpr uint8_t RIGHT_MOTOR_IN2_PIN = 12;
+constexpr uint8_t RIGHT_MOTOR_PWM_PIN = 13;
 constexpr uint8_t MOTOR_STANDBY_PIN = 17;
 constexpr bool LEFT_MOTOR_REVERSED = false;
 constexpr bool RIGHT_MOTOR_REVERSED = false;
@@ -48,11 +63,13 @@ constexpr uint16_t LINE_LOSS_GRACE_CYCLES = 50;
 // Corner handling in control_step.cpp: a run of adjacent
 // sensors firing together marks a lateral line segment, i.e. a sharp turn.
 // At speed the cluster can transit the array in a couple of control cycles,
-// so confirmation is anchored to the blackout arriving within
-// CORNER_RECENT_CYCLES of the latest cluster sighting.
+// so accept one directional cluster sample but require a confirmed blackout
+// within CORNER_RECENT_CYCLES of the latest cluster sighting.
 constexpr uint8_t CORNER_MIN_RUN = 3;         // adjacent sensors = corner signature
 constexpr uint8_t CORNER_RECENT_CYCLES = 5;   // blackout shortly after a cluster confirms
-constexpr uint8_t CORNER_CONFIRM_CYCLES = 2;
+// React to one directional cluster sample for turn candidates. Keep the
+// separate blackout and line-reacquisition confirmations at two samples.
+constexpr uint8_t CORNER_CONFIRM_CYCLES = 1;
 constexpr uint8_t CORNER_BLACKOUT_CONFIRM_CYCLES = 2;
 constexpr uint8_t LINE_REACQUIRE_CONFIRM_CYCLES = 2;
 constexpr int CORNER_PIVOT_SPEED = 90;        // spin PWM while rotating on the spot

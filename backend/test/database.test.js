@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createDatabase } from '../src/database.js';
 
@@ -9,6 +12,8 @@ function telemetryRow(seq = 1) {
   return {
     robotId: 'linebot-01', bootId: 'boot-a', seq, receivedAt: time,
     uptimeMs: seq * 10, mask: 4, position: 2, error: 0, correction: 0,
+    frontMask: 4, frontPosition: 2, rearMask: 8, rearPosition: 3,
+    controlSensor: 'front',
     leftPwm: 75, rightPwm: 75, mode: 'track', dtMs: 10,
     pidRevision: 0, droppedFrames: 0, droppedAcks: 0, droppedEvents: 0,
   };
@@ -22,9 +27,80 @@ test('SQLite deduplicates telemetry and returns bounded history', () => {
     assert.equal(db.insertTelemetry({ ...telemetryRow(2), receivedAt: '2026-10-22T00:00:01.000Z' }), true);
     assert.equal(db.raw.prepare('SELECT count(*) AS n FROM telemetry').get().n, 2);
     assert.equal(db.latestTelemetry('linebot-01').seq, 2);
+    const latest = db.latestTelemetry('linebot-01');
+    assert.deepEqual(
+      [latest.front_mask, latest.front_position, latest.rear_mask,
+        latest.rear_position, latest.control_sensor],
+      [4, 2, 8, 3, 'front'],
+    );
     assert.equal(db.telemetryPage('linebot-01', null, 1).length, 1);
   } finally {
     db.close();
+  }
+});
+
+test('SQLite keeps a null front position when the rear row is selected', () => {
+  const db = createDatabase(':memory:');
+  try {
+    const row = {
+      ...telemetryRow(3),
+      mask: 16,
+      position: 4,
+      error: 2,
+      frontMask: 0,
+      frontPosition: null,
+      rearMask: 16,
+      rearPosition: 4,
+      controlSensor: 'rear',
+    };
+    db.insertTelemetry(row);
+    const saved = db.latestTelemetry('linebot-01');
+    assert.deepEqual(
+      [saved.front_mask, saved.front_position, saved.rear_mask,
+        saved.rear_position, saved.control_sensor],
+      [0, null, 16, 4, 'rear'],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('SQLite v2 telemetry rows migrate as front-only samples', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'linebot-db-'));
+  const path = join(directory, 'telemetry.sqlite');
+  try {
+    const initial = createDatabase(path);
+    for (const column of [
+      'front_mask', 'front_position', 'rear_mask', 'rear_position', 'control_sensor',
+    ]) {
+      initial.raw.exec(`ALTER TABLE telemetry DROP COLUMN ${column}`);
+    }
+    const row = telemetryRow(1);
+    initial.raw.prepare(`
+      INSERT INTO telemetry (
+        robot_id, boot_id, seq, received_at, uptime_ms, mask, position, error,
+        correction, left_pwm, right_pwm, mode, dt_ms, pid_revision,
+        dropped_frames, dropped_acks, dropped_events
+      ) VALUES (
+        @robotId, @bootId, @seq, @receivedAt, @uptimeMs, @mask, @position, @error,
+        @correction, @leftPwm, @rightPwm, @mode, @dtMs, @pidRevision,
+        @droppedFrames, @droppedAcks, @droppedEvents
+      )
+    `).run(row);
+    initial.raw.pragma('user_version = 2');
+    initial.close();
+
+    const migrated = createDatabase(path);
+    assert.equal(migrated.raw.pragma('user_version', { simple: true }), 3);
+    const saved = migrated.latestTelemetry('linebot-01');
+    assert.deepEqual(
+      [saved.front_mask, saved.front_position, saved.rear_mask,
+        saved.rear_position, saved.control_sensor],
+      [4, 2, null, null, 'front'],
+    );
+    migrated.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

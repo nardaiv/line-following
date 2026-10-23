@@ -16,6 +16,7 @@ enum class ControlEvent : uint8_t {
   PivotTimedOut
 };
 enum class MotorAction : uint8_t { Hold, Drive, Stop };
+enum class ControlSensor : uint8_t { None, Front, Rear };
 
 struct ControlOutput {
   ControlMode mode;
@@ -28,6 +29,13 @@ struct ControlOutput {
   float correction;
   int leftSpeed;
   int rightSpeed;
+  uint8_t frontMask;
+  bool frontHasLine;
+  float frontPosition;
+  uint8_t rearMask;
+  bool rearHasLine;
+  float rearPosition;
+  ControlSensor controlSensor;
 };
 
 // Hardware-independent one-step line-following and corner/loss state machine.
@@ -35,7 +43,10 @@ class ControlStep {
  public:
   ControlStep();
 
-  ControlOutput update(const SensorReading& reading, uint32_t elapsedMs,
+  ControlOutput update(const SensorFrame& frame, uint32_t elapsedMs,
+                       uint32_t nowMs);
+  // Compatibility helper for native tests and callers with a front-only row.
+  ControlOutput update(const SensorReading& frontReading, uint32_t elapsedMs,
                        uint32_t nowMs);
   bool configurePid(const PidConfig& config);
 
@@ -56,4 +67,5 @@ class ControlStep {
   uint32_t pidElapsedMs_;
   int lastLeftSpeed_;
   int lastRightSpeed_;
+  ControlSensor lastControlSensor_;
 };

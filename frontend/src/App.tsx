@@ -7,6 +7,7 @@ import TrendChart from './components/TrendChart';
 import { ApiError, requestJson, sendPidCommand } from './lib/api';
 import {
   chooseRobotId,
+  hasDualCenterLineCue,
   normalizePidAck,
   normalizePidState,
   normalizeStatus,
@@ -292,8 +293,8 @@ export default function App() {
 
   const stale = !telemetry || now - Date.parse(telemetry.receivedAt) > STALE_AFTER_MS;
   const onlineState = status?.state === 'online' && !stale;
-  const positionLabel = telemetry?.position === null || telemetry?.position === undefined
-    ? 'NO LINE' : telemetry.position.toFixed(1);
+  const straightCue = !telemetry || telemetry.rearMask === null
+    ? null : hasDualCenterLineCue(telemetry.frontMask, telemetry.rearMask);
   const displayedHistory = useMemo(() => history.slice(-MAX_POINTS), [history]);
 
   async function applyPid(gains: { kp: number; ki: number; kd: number }) {
@@ -376,18 +377,47 @@ export default function App() {
         <section className="panel sensor-panel">
           <div className="panel-heading">
             <div>
-              <span className="eyebrow">5-CHANNEL IR ARRAY</span>
-              <h2>Sensor position</h2>
+              <span className="eyebrow">{telemetry && telemetry.rearMask !== null
+                ? 'DUAL 5-CHANNEL ARRAYS' : '5-CHANNEL IR ARRAY'}</span>
+              <h2>Sensor rows</h2>
             </div>
             <span className={`mode-pill mode-pill--${telemetry?.mode ?? 'waiting'}`}>
               <span className="mode-pill__dot" />{modeLabel(telemetry?.mode ?? null)}
             </span>
           </div>
-          <SensorArray mask={telemetry?.mask ?? 0} position={telemetry?.position ?? null} stale={stale} hasSample={telemetry !== null} />
+          <div className="sensor-row">
+            <div className="sensor-row__label">
+              <span>FRONT ARRAY</span>
+              <span>{telemetry?.controlSensor === 'front' ? 'CONTROL INPUT' : 'LOOKAHEAD'}</span>
+            </div>
+            <SensorArray
+              rowLabel="Front row"
+              mask={telemetry?.frontMask ?? 0}
+              position={telemetry?.frontPosition ?? null}
+              stale={stale}
+              hasSample={telemetry !== null}
+            />
+          </div>
+          {telemetry && telemetry.rearMask !== null && <div className="sensor-row sensor-row--rear">
+            <div className="sensor-row__label">
+              <span>REAR ARRAY</span>
+              <span>{telemetry.controlSensor === 'rear' ? 'CONTROL FALLBACK' : 'TRAILING ROW'}</span>
+            </div>
+            <SensorArray
+              rowLabel="Rear row"
+              mask={telemetry.rearMask}
+              position={telemetry.rearPosition}
+              stale={stale}
+              hasSample
+            />
+          </div>}
           <div className="sensor-readout">
-            <div><span>POSITION</span><strong>{positionLabel}<small>/ 4</small></strong></div>
-            <div><span>MASK</span><strong className="mono">{(telemetry?.mask ?? 0).toString(2).padStart(5, '0')}</strong></div>
-            <div><span>DEVICE UPTIME</span><strong>{telemetry ? <>{(telemetry.uptimeMs / 1000).toFixed(1)}<small> SEC</small></> : '—'}</strong></div>
+            <div><span>FRONT POS</span><strong>{telemetry?.frontPosition === null || telemetry?.frontPosition === undefined
+              ? 'NO LINE' : telemetry.frontPosition.toFixed(1)}<small>/ 4</small></strong></div>
+            <div><span>REAR POS</span><strong>{telemetry?.rearMask === null || telemetry?.rearMask === undefined
+              || telemetry.rearPosition === null ? '—' : telemetry.rearPosition.toFixed(1)}<small>/ 4</small></strong></div>
+            <div><span>CONTROL ROW</span><strong>{telemetry?.controlSensor.toUpperCase() ?? '—'}</strong></div>
+            <div><span>STRAIGHT CUE</span><strong>{straightCue === null ? '—' : straightCue ? 'YES' : 'NO'}</strong></div>
           </div>
         </section>
 

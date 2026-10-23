@@ -31,6 +31,18 @@ const char* modeName(ControlMode mode) {
   return "unknown";
 }
 
+const char* controlSensorName(ControlSensor sensor) {
+  switch (sensor) {
+    case ControlSensor::Front:
+      return "front";
+    case ControlSensor::Rear:
+      return "rear";
+    case ControlSensor::None:
+      return "none";
+  }
+  return "none";
+}
+
 const char* eventName(ControlEvent event) {
   switch (event) {
     case ControlEvent::CornerCluster:
@@ -210,7 +222,7 @@ size_t encodeTelemetryPayload(const char* robotId, const char* bootId,
                               const TelemetrySnapshot& snapshot, char* output,
                               size_t capacity) {
   if (robotId == NULL || bootId == NULL) return 0;
-  StaticJsonDocument<640> document;
+  StaticJsonDocument<768> document;
   document["v"] = PROTOCOL_VERSION;
   document["robotId"] = robotId;
   document["bootId"] = bootId;
@@ -233,6 +245,19 @@ size_t encodeTelemetryPayload(const char* robotId, const char* bootId,
   document["droppedFrames"] = snapshot.droppedFrames;
   document["droppedAcks"] = snapshot.droppedAcks;
   document["droppedEvents"] = snapshot.droppedEvents;
+  document["frontMask"] = snapshot.frontMask;
+  if (snapshot.frontHasLine) {
+    document["frontPosition"] = snapshot.frontPosition;
+  } else {
+    document["frontPosition"] = nullptr;
+  }
+  document["rearMask"] = snapshot.rearMask;
+  if (snapshot.rearHasLine) {
+    document["rearPosition"] = snapshot.rearPosition;
+  } else {
+    document["rearPosition"] = nullptr;
+  }
+  document["controlSensor"] = controlSensorName(snapshot.controlSensor);
   return serializeDocument(document, output, capacity);
 }
 

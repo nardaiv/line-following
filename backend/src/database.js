@@ -9,7 +9,7 @@ export function createDatabase(path) {
   db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
   const schemaVersion = db.pragma('user_version', { simple: true });
-  if (schemaVersion > 2) throw new Error(`Unsupported SQLite schema ${schemaVersion}`);
+  if (schemaVersion > 3) throw new Error(`Unsupported SQLite schema ${schemaVersion}`);
   const schemaSql = `
     CREATE TABLE IF NOT EXISTS telemetry (
       robot_id TEXT NOT NULL,
@@ -85,21 +85,53 @@ export function createDatabase(path) {
     CREATE INDEX IF NOT EXISTS pid_commands_pending
       ON pid_commands(robot_id, status, requested_at DESC);
   `;
-  const migrateToV2 = db.transaction(() => {
+  const migrate = db.transaction(() => {
     db.exec(schemaSql);
-    db.pragma('user_version = 2');
+    let version = db.pragma('user_version', { simple: true });
+    if (version < 2) {
+      db.pragma('user_version = 2');
+      version = 2;
+    }
+    if (version < 3) {
+      const telemetryColumns = new Set(
+        db.prepare('PRAGMA table_info(telemetry)').all().map(column => column.name),
+      );
+      const additions = [
+        ['front_mask', 'INTEGER'],
+        ['front_position', 'REAL'],
+        ['rear_mask', 'INTEGER'],
+        ['rear_position', 'REAL'],
+        ['control_sensor', 'TEXT'],
+      ];
+      for (const [name, type] of additions) {
+        if (!telemetryColumns.has(name)) {
+          db.exec(`ALTER TABLE telemetry ADD COLUMN ${name} ${type}`);
+        }
+      }
+      db.exec(`
+        UPDATE telemetry
+        SET front_mask=COALESCE(front_mask, mask),
+            front_position=COALESCE(front_position, position),
+            control_sensor=COALESCE(
+              control_sensor, CASE WHEN mask=0 THEN 'none' ELSE 'front' END
+            )
+      `);
+      db.pragma('user_version = 3');
+    }
   });
-  migrateToV2();
+  migrate();
 
   const insertTelemetry = db.prepare(`
     INSERT OR IGNORE INTO telemetry (
       robot_id, boot_id, seq, received_at, uptime_ms, mask, position, error,
       correction, left_pwm, right_pwm, mode, dt_ms, pid_revision,
-      dropped_frames, dropped_acks, dropped_events
+      dropped_frames, dropped_acks, dropped_events,
+      front_mask, front_position, rear_mask, rear_position, control_sensor
     ) VALUES (
       @robotId, @bootId, @seq, @receivedAt, @uptimeMs, @mask, @position, @error,
       @correction, @leftPwm, @rightPwm, @mode, @dtMs, @pidRevision,
-      @droppedFrames, @droppedAcks, @droppedEvents
+      @droppedFrames, @droppedAcks, @droppedEvents,
+      @frontMask, @frontPosition, @rearMask, @rearPosition, @controlSensor
     )
   `);
   const insertEvent = db.prepare(`
@@ -158,7 +190,14 @@ export function createDatabase(path) {
   return {
     raw: db,
     close: () => db.close(),
-    insertTelemetry: row => insertTelemetry.run(row).changes === 1,
+    insertTelemetry: row => insertTelemetry.run({
+      ...row,
+      frontMask: row.frontMask ?? row.mask,
+      frontPosition: row.frontPosition === undefined ? row.position : row.frontPosition,
+      rearMask: row.rearMask ?? null,
+      rearPosition: row.rearPosition ?? null,
+      controlSensor: row.controlSensor ?? (row.mask === 0 ? 'none' : 'front'),
+    }).changes === 1,
     insertEvent: row => insertEvent.run(row).changes === 1,
     upsertStatus: row => upsertStatus.run(row),
     upsertPidState: row => upsertPidState.run({

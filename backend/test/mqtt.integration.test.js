@@ -161,11 +161,19 @@ test('local Mosquitto -> Hono -> SQLite ingests, deduplicates and reconciles PID
   const telemetry = {
     v: 1, robotId: ROBOT_ID, bootId: 'boot-test-a', seq: 1,
     uptimeMs: 1500, mask: 4, position: 2, error: 0, correction: 0,
+    frontMask: 4, frontPosition: 2, rearMask: 8, rearPosition: 3,
+    controlSensor: 'front',
     leftPwm: 75, rightPwm: 75, mode: 'track', dtMs: 10,
     pidRevision: 0, droppedFrames: 0, droppedAcks: 0, droppedEvents: 0,
   };
   await publish(device, telemetryTopic, telemetry);
   await waitFor(() => database.latestTelemetry(ROBOT_ID)?.seq === 1, 'SQLite telemetry row');
+  assert.deepEqual(
+    [database.latestTelemetry(ROBOT_ID).front_mask,
+      database.latestTelemetry(ROBOT_ID).rear_mask,
+      database.latestTelemetry(ROBOT_ID).control_sensor],
+    [4, 8, 'front'],
+  );
   await publish(device, telemetryTopic, telemetry);
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(database.raw.prepare('SELECT count(*) AS n FROM telemetry').get().n, 1);
