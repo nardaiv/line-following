@@ -1,0 +1,16 @@
+# Sample fixed robot ID; add an explicit block for every commissioned robot.
+user linebot-01
+topic write robots/linebot-01/telemetry
+topic write robots/linebot-01/status
+topic write robots/linebot-01/pid/state
+topic write robots/linebot-01/pid/ack
+topic write robots/linebot-01/event
+topic read robots/linebot-01/pid/set
+
+user backend
+topic read robots/linebot-01/telemetry
+topic read robots/linebot-01/status
+topic read robots/linebot-01/pid/state
+topic read robots/linebot-01/pid/ack
+topic read robots/linebot-01/event
+topic write robots/linebot-01/pid/set

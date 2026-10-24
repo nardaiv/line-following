@@ -1,0 +1,12 @@
+# Copy to mosquitto.conf.local; run Mosquitto from this directory so relative paths resolve.
+# Start loopback-only by default. For robot access, edit the local copy to bind
+# the broker host's LAN IPv4 address (not 0.0.0.0) and restrict port 1883 in the firewall.
+listener 1883 127.0.0.1
+protocol mqtt
+allow_anonymous false
+password_file ./passwd
+acl_file ./acl
+persistence true
+persistence_location ./data/
+autosave_interval 60
+log_dest stdout

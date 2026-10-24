@@ -12,6 +12,7 @@ class LineController {
   // error is measured in sensor-index units; positive means the line is right
   // of center. dt is elapsed time in seconds.
   float update(float error, float dt);
+  void setGains(float kp, float ki, float kd);
   void reset();
 
  private:
@@ -22,5 +23,6 @@ class LineController {
   float integralLimit_;
   float integral_;
   float previousError_;
+  float filteredDerivative_;
   bool hasPreviousError_;
 };

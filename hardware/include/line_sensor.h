@@ -1,14 +1,11 @@
 #pragma once
 
-#include <stdint.h>
-
-#include "config.h"
+#include "sensor_reading.h"
 
 class LineSensor {
  public:
   void begin();
 
-  // Returns true when one or more sensors detect the line. Position is in
-  // sensor-index units (0 is leftmost, SENSOR_COUNT - 1 is rightmost).
-  bool readPosition(float& position);
+  // Samples both digital rows once and derives positions from those masks.
+  SensorFrame read();
 };
