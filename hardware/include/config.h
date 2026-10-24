@@ -75,4 +75,17 @@ constexpr uint8_t LINE_REACQUIRE_CONFIRM_CYCLES = 2;
 constexpr int CORNER_PIVOT_SPEED = 90;        // spin PWM while rotating on the spot
 constexpr uint32_t CORNER_PIVOT_TIMEOUT_MS = 1500;
 
+// Soft straightener (control_step.cpp): while both rows track the line, the
+// front and rear row positions span the robot's axis as a line segment over
+// the track, and their difference is a direct but very quantized heading
+// estimate: zero exactly when the axis is parallel to the line. The heading
+// term adds gentle damping to the PID's offset correction so rotation errors
+// are countered before they grow into lateral drift. It is suppressed during
+// corner cluster signatures, when either row is blind, and when the rows
+// disagree by more than HEADING_MAX_DIFF indexes (mid-turn geometry).
+// Gains are per index of difference; retune them if the row spacing changes.
+constexpr float HEADING_GAIN = 6.0f;
+constexpr float HEADING_MAX_DIFF = 1.5f;
+constexpr float HEADING_FILTER_ALPHA = 0.4f;
+
 }  // namespace Config

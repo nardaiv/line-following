@@ -693,6 +693,58 @@ void test_device_settings_reject_mdns_local_broker_host() {
   TEST_ASSERT_FALSE(parseProvisionCommand(frame, sizeof(frame) - 1, command));
 }
 
+void test_heading_term_zero_when_rows_centered() {
+  ControlStep step;
+  ControlOutput output =
+      step.update(sensorFrameFromMasks(0b00100, 0b00100), 10, 10);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.rightSpeed);
+  output = step.update(sensorFrameFromMasks(0b00100, 0b00100), 10, 20);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.rightSpeed);
+}
+
+void test_heading_term_pushes_toward_parallel_axis() {
+  ControlStep step;
+  ControlOutput output;
+  for (uint32_t cycle = 1; cycle <= 5; ++cycle) {
+    output = step.update(sensorFrameFromMasks(0b01000, 0b00100), 10,
+                         cycle * 10U);
+  }
+  // Front row reads 3.0, rear row reads 2.0: the axis points left of the
+  // line and the heading term drives the steering right, on top of the
+  // unchanged PID response (Kp * 1 + Ki * 5 * 10 ms = 12.55). The heading
+  // term reaches GAIN * 1 * (1 - (1 - ALPHA)^5) = 5.53344 after five
+  // filtered cycles: steer = 18.08344, truncated to 93 / 56 by the int PWM
+  // cast (93.08 -> 93 and 56.92 -> 56).
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 12.55f, output.correction);
+  TEST_ASSERT_EQUAL_INT(93, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(56, output.rightSpeed);
+}
+
+void test_implausible_row_disagreement_suppresses_heading() {
+  ControlStep step;
+  ControlOutput output =
+      step.update(sensorFrameFromMasks(0b00100, 0b10000), 10, 10);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.rightSpeed);
+  // Two cycles also prove no filtered residue bleeds back after the gate.
+  output = step.update(sensorFrameFromMasks(0b00100, 0b10000), 10, 20);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.rightSpeed);
+}
+
+void test_rear_cluster_signature_suppresses_heading() {
+  ControlStep step;
+  ControlOutput output =
+      step.update(sensorFrameFromMasks(0b00100, 0b11100), 10, 10);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.rightSpeed);
+  output = step.update(sensorFrameFromMasks(0b00100, 0b11100), 10, 20);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.leftSpeed);
+  TEST_ASSERT_EQUAL_INT(Config::BASE_SPEED, output.rightSpeed);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_zero_error_has_zero_output);
@@ -738,5 +790,9 @@ int main(int, char**) {
   RUN_TEST(test_pid_command_application_is_revision_guarded_and_idempotent);
   RUN_TEST(test_mqtt_telemetry_state_and_ack_payloads_serialize);
   RUN_TEST(test_device_settings_reject_mdns_local_broker_host);
+  RUN_TEST(test_heading_term_zero_when_rows_centered);
+  RUN_TEST(test_heading_term_pushes_toward_parallel_axis);
+  RUN_TEST(test_implausible_row_disagreement_suppresses_heading);
+  RUN_TEST(test_rear_cluster_signature_suppresses_heading);
   return UNITY_END();
 }

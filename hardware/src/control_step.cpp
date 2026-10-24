@@ -103,7 +103,8 @@ ControlStep::ControlStep()
       pidElapsedMs_(0),
       lastLeftSpeed_(0),
       lastRightSpeed_(0),
-      lastControlSensor_(ControlSensor::None) {}
+      lastControlSensor_(ControlSensor::None),
+      headingSmoothed_(0.0f) {}
 
 bool ControlStep::configurePid(const PidConfig& config) {
   if (!isPidConfigValid(config)) return false;
@@ -335,6 +336,33 @@ ControlOutput ControlStep::update(const SensorFrame& frame,
   }
   lastControlSensor_ = selected;
 
+  // Soft straightener: the front/rear row pair models the robot's axis as a
+  // line segment over the track; front - rear is a direct (quantized) yaw
+  // estimate that reads zero when the axis runs parallel to the line. The
+  // term adds gentle damping to the PID's offset correction while the point
+  // model and the offset PID stay unchanged. Suppress it during corner
+  // signatures, when either row is blind, and on implausible row
+  // disagreement where mid-turn geometry makes the estimate meaningless.
+  float headingTerm = 0.0f;
+  const bool headingUsable =
+      frame.front.hasLine && frame.rear.hasLine &&
+      side == ClusterSide::None &&
+      classifyCluster(frame.rear.mask) == ClusterSide::None;
+  if (headingUsable) {
+    const float difference = frame.front.position - frame.rear.position;
+    if (difference >= -Config::HEADING_MAX_DIFF &&
+        difference <= Config::HEADING_MAX_DIFF) {
+      const float raw = Config::HEADING_GAIN * difference;
+      headingTerm = Config::HEADING_FILTER_ALPHA * raw +
+                    (1.0f - Config::HEADING_FILTER_ALPHA) * headingSmoothed_;
+      headingSmoothed_ = headingTerm;
+    } else {
+      headingSmoothed_ = 0.0f;
+    }
+  } else {
+    headingSmoothed_ = 0.0f;
+  }
+
   const float center = (Config::SENSOR_COUNT - 1) / 2.0f;
   const float error = reading.position - center;
   output.error = error;
@@ -346,8 +374,9 @@ ControlOutput ControlStep::update(const SensorFrame& frame,
   }
   const float correction = controller_.update(error, pidDtMs / 1000.0f);
   output.correction = correction;
-  output.leftSpeed = clampMotorSpeed(Config::BASE_SPEED + correction);
-  output.rightSpeed = clampMotorSpeed(Config::BASE_SPEED - correction);
+  const float steer = correction + headingTerm;
+  output.leftSpeed = clampMotorSpeed(Config::BASE_SPEED + steer);
+  output.rightSpeed = clampMotorSpeed(Config::BASE_SPEED - steer);
   output.motorAction = MotorAction::Drive;
   lastLeftSpeed_ = output.leftSpeed;
   lastRightSpeed_ = output.rightSpeed;

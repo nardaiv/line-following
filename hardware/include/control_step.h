@@ -68,4 +68,5 @@ class ControlStep {
   int lastLeftSpeed_;
   int lastRightSpeed_;
   ControlSensor lastControlSensor_;
+  float headingSmoothed_;
 };
