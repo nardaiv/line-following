@@ -1,6 +1,6 @@
 # Local React dashboard
 
-The dashboard has no runtime font/CDN dependency, so the UI itself can load offline with local services. The Vite/React interface reads telemetry, robot status, PID state and history from the Hono bridge, and streams robot-scoped SSE updates. It does not send motor commands; PID writes only update gains and are restricted by the backend's loopback binding and `ALLOWED_ORIGINS` check. There is no admin-token authentication; do not expose the backend to untrusted networks or local users.
+The dashboard bundles Inter Variable locally and has no runtime font/CDN dependency, so the UI itself can load offline with local services. The Vite/React interface reads telemetry, robot status, PID state and history from the Hono bridge, and streams robot-scoped SSE updates. It does not send motor commands; PID writes only update gains and are restricted by the backend's loopback binding and `ALLOWED_ORIGINS` check. There is no admin-token authentication; do not expose the backend to untrusted networks or local users.
 
 ## Run locally
 

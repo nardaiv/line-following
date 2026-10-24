@@ -332,13 +332,9 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar">
-      <a className="brand" href="#top" aria-label="Track Lab home">
-        <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /></span>
-        <span className="brand-name">TRACK<span>LAB</span></span>
-      </a>
       <div className="topbar__center">
-        <span className="eyebrow">LOCAL ROBOT TELEMETRY</span>
-        <h1>Line follower console</h1>
+        <span className="eyebrow">ROBOT TELEMETRY</span>
+        <h1>Line follower telemetry</h1>
       </div>
       <div className="topbar__right">
         <label className="robot-select-label" htmlFor="robot-select">DEVICE</label>
@@ -421,8 +417,8 @@ export default function App() {
         </section>
 
         <section className="charts-grid" aria-label="Recent response charts">
-          <TrendChart points={displayedHistory} field="error" title="Line error" color="#c4ef5d" unit="ERR" />
-          <TrendChart points={displayedHistory} field="correction" title="PID correction" color="#ef91bc" unit="PWM" />
+          <TrendChart points={displayedHistory} field="error" title="Line error" color="#ffffff" unit="ERR" />
+          <TrendChart points={displayedHistory} field="correction" title="PID correction" color="#999999" unit="PWM" />
         </section>
 
         <TelemetryExport key={robotId} robotId={robotId} />
@@ -489,7 +485,7 @@ export default function App() {
     </div>
 
     <footer className="app-footer">
-      <span><strong>TRACKLAB</strong> · ESP32-S3 LINE FOLLOWER</span>
+      <span><strong>ESP32-S3</strong> · LOCAL TELEMETRY</span>
       <span>LOCAL MODE · {status?.state?.toUpperCase() ?? 'AWAITING DEVICE STATUS'} · {formatClock(telemetry?.receivedAt)}</span>
     </footer>
   </main>;
