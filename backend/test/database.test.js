@@ -65,6 +65,41 @@ test('SQLite keeps a null front position when the rear row is selected', () => {
   }
 });
 
+test('CSV telemetry pages are oldest-first with inclusive from and exclusive to', () => {
+  const db = createDatabase(':memory:');
+  const from = '2026-10-22T00:00:00.000Z';
+  const to = '2026-10-22T00:00:02.000Z';
+  try {
+    const rows = [
+      { ...telemetryRow(10), receivedAt: '2026-10-21T23:59:59.999Z' },
+      { ...telemetryRow(1), receivedAt: from, bootId: 'boot-a' },
+      { ...telemetryRow(1), receivedAt: from, bootId: 'boot-b' },
+      { ...telemetryRow(2), receivedAt: '2026-10-22T00:00:01.000Z', bootId: 'boot-a' },
+      { ...telemetryRow(3), receivedAt: to, bootId: 'boot-a' },
+    ];
+    for (const row of rows) db.insertTelemetry(row);
+
+    assert.equal(db.telemetryCsvCount('linebot-01', from, to), 3);
+    const snapshot = db.openTelemetryCsvExport('linebot-01', from, to, 100);
+    try {
+      assert.equal(snapshot.rowCount, 3);
+      const first = snapshot.page(null, 2);
+      assert.deepEqual(first.map(row => `${row.received_at}:${row.boot_id}:${row.seq}`), [
+        `${from}:boot-a:1`, `${from}:boot-b:1`,
+      ]);
+      const last = first.at(-1);
+      const second = snapshot.page({
+        receivedAt: last.received_at, seq: last.seq, bootId: last.boot_id,
+      }, 2);
+      assert.deepEqual(second.map(row => row.seq), [2]);
+    } finally {
+      snapshot.close();
+    }
+  } finally {
+    db.close();
+  }
+});
+
 test('SQLite v2 telemetry rows migrate as front-only samples', () => {
   const directory = mkdtempSync(join(tmpdir(), 'linebot-db-'));
   const path = join(directory, 'telemetry.sqlite');

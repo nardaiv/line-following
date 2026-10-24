@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
@@ -120,6 +121,34 @@ export function createDatabase(path) {
     }
   });
   migrate();
+  db.exec(`
+    CREATE TEMP TABLE telemetry_csv_exports (
+      export_id TEXT NOT NULL,
+      robot_id TEXT NOT NULL,
+      boot_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      received_at TEXT NOT NULL,
+      uptime_ms INTEGER NOT NULL,
+      mask INTEGER NOT NULL,
+      position REAL,
+      error REAL,
+      front_mask INTEGER,
+      front_position REAL,
+      rear_mask INTEGER,
+      rear_position REAL,
+      control_sensor TEXT,
+      correction REAL NOT NULL,
+      left_pwm INTEGER NOT NULL,
+      right_pwm INTEGER NOT NULL,
+      mode TEXT NOT NULL,
+      dt_ms INTEGER NOT NULL,
+      pid_revision INTEGER NOT NULL,
+      dropped_frames INTEGER NOT NULL,
+      dropped_acks INTEGER NOT NULL,
+      dropped_events INTEGER NOT NULL,
+      PRIMARY KEY (export_id, received_at, seq, boot_id)
+    )
+  `);
 
   const insertTelemetry = db.prepare(`
     INSERT OR IGNORE INTO telemetry (
@@ -134,6 +163,56 @@ export function createDatabase(path) {
       @frontMask, @frontPosition, @rearMask, @rearPosition, @controlSensor
     )
   `);
+  const countTelemetryRange = db.prepare(`
+    SELECT COUNT(*) AS row_count FROM telemetry
+    WHERE robot_id=@robotId AND received_at>=@fromAt AND received_at<@toAt
+  `);
+  const insertTelemetryCsvSnapshot = db.prepare(`
+    INSERT INTO telemetry_csv_exports (
+      export_id, robot_id, boot_id, seq, received_at, uptime_ms, mask,
+      position, error, front_mask, front_position, rear_mask, rear_position,
+      control_sensor, correction, left_pwm, right_pwm, mode, dt_ms, pid_revision,
+      dropped_frames, dropped_acks, dropped_events
+    )
+    SELECT
+      @exportId, robot_id, boot_id, seq, received_at, uptime_ms, mask,
+      position, error, front_mask, front_position, rear_mask, rear_position,
+      control_sensor, correction, left_pwm, right_pwm, mode, dt_ms, pid_revision,
+      dropped_frames, dropped_acks, dropped_events
+    FROM telemetry
+    WHERE robot_id=@robotId AND received_at>=@fromAt AND received_at<@toAt
+  `);
+  const telemetryCsvSnapshotFirstPage = db.prepare(`
+    SELECT robot_id, boot_id, seq, received_at, uptime_ms, mask, position, error,
+      front_mask, front_position, rear_mask, rear_position, control_sensor,
+      correction, left_pwm, right_pwm, mode, dt_ms, pid_revision,
+      dropped_frames, dropped_acks, dropped_events
+    FROM telemetry_csv_exports WHERE export_id=@exportId
+    ORDER BY received_at ASC, seq ASC, boot_id ASC LIMIT @limit
+  `);
+  const telemetryCsvSnapshotAfterPage = db.prepare(`
+    SELECT robot_id, boot_id, seq, received_at, uptime_ms, mask, position, error,
+      front_mask, front_position, rear_mask, rear_position, control_sensor,
+      correction, left_pwm, right_pwm, mode, dt_ms, pid_revision,
+      dropped_frames, dropped_acks, dropped_events
+    FROM telemetry_csv_exports
+    WHERE export_id=@exportId AND (
+      received_at>@receivedAt OR
+      (received_at=@receivedAt AND seq>@seq) OR
+      (received_at=@receivedAt AND seq=@seq AND boot_id>@bootId)
+    )
+    ORDER BY received_at ASC, seq ASC, boot_id ASC LIMIT @limit
+  `);
+  const deleteTelemetryCsvSnapshot = db.prepare(
+    'DELETE FROM telemetry_csv_exports WHERE export_id=?',
+  );
+  const createTelemetryCsvSnapshot = db.transaction(({ exportId, robotId, fromAt, toAt, maxRows }) => {
+    const rowCount = countTelemetryRange.get({ robotId, fromAt, toAt }).row_count;
+    if (rowCount > maxRows) return { rowCount, tooLarge: true };
+    const inserted = insertTelemetryCsvSnapshot.run({ exportId, robotId, fromAt, toAt }).changes;
+    if (inserted !== rowCount) throw new Error('csv_snapshot_count_mismatch');
+    return { rowCount, tooLarge: false };
+  }).immediate;
   const insertEvent = db.prepare(`
     INSERT OR IGNORE INTO control_events (
       robot_id, boot_id, seq, received_at, uptime_ms, event, mask, mode, position
@@ -242,6 +321,30 @@ export function createDatabase(path) {
         )
         ORDER BY received_at DESC, seq DESC, boot_id DESC LIMIT @limit
       `).all({ robotId, ...before, limit });
+    },
+    telemetryCsvCount(robotId, fromAt, toAt) {
+      return countTelemetryRange.get({ robotId, fromAt, toAt }).row_count;
+    },
+    openTelemetryCsvExport(robotId, fromAt, toAt, maxRows) {
+      const exportId = randomUUID();
+      const result = createTelemetryCsvSnapshot({
+        exportId, robotId, fromAt, toAt, maxRows,
+      });
+      let closed = result.tooLarge || result.rowCount === 0;
+      return {
+        ...result,
+        page(after, limit) {
+          if (closed) throw new Error('csv_snapshot_closed');
+          const query = after === null
+            ? telemetryCsvSnapshotFirstPage : telemetryCsvSnapshotAfterPage;
+          return query.all({ exportId, ...(after ?? {}), limit });
+        },
+        close() {
+          if (closed) return;
+          deleteTelemetryCsvSnapshot.run(exportId);
+          closed = true;
+        },
+      };
     },
     latestStatus: robotId => db.prepare(
       'SELECT * FROM robot_status WHERE robot_id=?',

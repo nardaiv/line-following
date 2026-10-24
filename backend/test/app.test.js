@@ -5,10 +5,8 @@ import { createApp } from '../src/app.js';
 import { createDatabase } from '../src/database.js';
 import { EventHub } from '../src/event-hub.js';
 
-const ADMIN_TOKEN = 'x'.repeat(40);
 const config = {
   robotIds: ['linebot-01', 'linebot-02'],
-  adminToken: ADMIN_TOKEN,
   allowedOrigins: ['http://localhost:5173'],
 };
 
@@ -30,7 +28,7 @@ function createHarness() {
   return { app, database, eventHub, mqttBridge, sent };
 }
 
-test('PID write requires bearer auth and an allowed origin', async () => {
+test('PID writes require an allowed origin but no admin bearer token', async () => {
   const h = createHarness();
   try {
     h.database.upsertPidState({
@@ -38,25 +36,13 @@ test('PID write requires bearer auth and an allowed origin', async () => {
       requestId: null, persisted: true, receivedAt: new Date().toISOString(),
     });
     const body = JSON.stringify({ kp: 10, ki: 1, kd: 0.1 });
-    const unauthorized = await h.app.request('/api/robots/linebot-01/pid', {
+    const missingOrigin = await h.app.request('/api/robots/linebot-01/pid', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body,
     });
-    assert.equal(unauthorized.status, 401);
-    const wrongToken = await h.app.request('/api/robots/linebot-01/pid', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${'y'.repeat(40)}`,
-        origin: 'http://localhost:5173',
-        'content-type': 'application/json',
-      },
-      body,
-    });
-    assert.equal(wrongToken.status, 401);
-
+    assert.equal(missingOrigin.status, 403);
     const deniedOrigin = await h.app.request('/api/robots/linebot-01/pid', {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${ADMIN_TOKEN}`,
         origin: 'https://untrusted.example',
         'content-type': 'application/json',
       },
@@ -65,10 +51,20 @@ test('PID write requires bearer auth and an allowed origin', async () => {
     assert.equal(deniedOrigin.status, 403);
     assert.equal(h.sent.length, 0);
 
+    const acceptedWithoutToken = await h.app.request('/api/robots/linebot-01/pid', {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:5173',
+        'content-type': 'application/json',
+      },
+      body,
+    });
+    assert.equal(acceptedWithoutToken.status, 202);
+    assert.equal(h.sent.length, 1);
+
     const oversized = await h.app.request('/api/robots/linebot-01/pid', {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${ADMIN_TOKEN}`,
         origin: 'http://localhost:5173',
         'content-type': 'application/json',
       },
@@ -91,7 +87,6 @@ test('PID POST publishes an unretained-revision command and returns pending', as
     const response = await h.app.request('/api/robots/linebot-01/pid', {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${ADMIN_TOKEN}`,
         origin: 'http://localhost:5173',
         'content-type': 'application/json',
       },

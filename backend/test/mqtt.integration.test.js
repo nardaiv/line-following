@@ -14,7 +14,6 @@ import { EventHub } from '../src/event-hub.js';
 import { startMqttBridge } from '../src/mqtt-bridge.js';
 
 const ROBOT_ID = 'linebot-01';
-const ADMIN_TOKEN = 't'.repeat(40);
 
 async function getFreePort() {
   const server = net.createServer();
@@ -118,7 +117,6 @@ test('local Mosquitto -> Hono -> SQLite ingests, deduplicates and reconciles PID
     mqttUsername: 'backend',
     mqttPassword: backendPassword,
     robotIds: [ROBOT_ID],
-    adminToken: ADMIN_TOKEN,
     allowedOrigins: ['http://localhost:5173'],
   };
   let bridge;
@@ -189,7 +187,6 @@ test('local Mosquitto -> Hono -> SQLite ingests, deduplicates and reconciles PID
   const response = await app.request(`/api/robots/${ROBOT_ID}/pid`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${ADMIN_TOKEN}`,
       host: '127.0.0.1:3000',
       origin: 'http://localhost:5173',
       'content-type': 'application/json',

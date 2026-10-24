@@ -1,16 +1,18 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { cors } from 'hono/cors';
 import { Hono } from 'hono';
 
+import {
+  csvFilename,
+  serializeTelemetryCsvRow,
+  TELEMETRY_CSV_HEADER,
+} from './telemetry-csv.js';
 import { PayloadError, validatePidPost } from './validation.js';
 
-function isAuthorized(header, expectedToken) {
-  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
-  const supplied = Buffer.from(header.slice(7));
-  const expected = Buffer.from(expectedToken);
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
-}
+const CSV_EXPORT_MAX_ROWS = 100_000;
+const CSV_EXPORT_PAGE_SIZE = 500;
+const UTC_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 function isAllowedRobot(config, robotId) {
   return config.robotIds.includes(robotId);
@@ -77,8 +79,40 @@ function encodeCursor(row) {
   })).toString('base64url');
 }
 
+function parseCsvTimestamp(value, name) {
+  if (typeof value !== 'string' || !UTC_ISO_RE.test(value)) {
+    throw new PayloadError(`invalid_${name}`);
+  }
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new PayloadError(`invalid_${name}`);
+  }
+  return value;
+}
+
+function parseCsvRange(fromValue, toValue, now) {
+  const from = parseCsvTimestamp(fromValue, 'from');
+  const requestedTo = parseCsvTimestamp(toValue, 'to');
+  if (from >= requestedTo) throw new PayloadError('invalid_date_range');
+  const to = requestedTo > now.toISOString() ? now.toISOString() : requestedTo;
+  if (from >= to) throw new PayloadError('invalid_date_range');
+  return { from, to };
+}
+
+function exportLimit(config) {
+  const configured = config.csvExportMaxRows;
+  return Number.isSafeInteger(configured) && configured > 0
+    ? Math.min(configured, CSV_EXPORT_MAX_ROWS) : CSV_EXPORT_MAX_ROWS;
+}
+
+function rangeErrorResponse(c, error) {
+  return error instanceof PayloadError
+    ? c.json({ error: error.message }, 400)
+    : c.json({ error: 'export_failed' }, 500);
+}
+
 function clientOriginAllowed(origin, config) {
-  return !origin || config.allowedOrigins.includes(origin);
+  return typeof origin === 'string' && config.allowedOrigins.includes(origin);
 }
 
 async function readJsonLimited(request, maxBytes) {
@@ -117,7 +151,7 @@ export function createApp({ config, database, mqttBridge, eventHub, clock = () =
   app.use('/api/*', cors({
     origin: origin => config.allowedOrigins.includes(origin) ? origin : '',
     allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: ['Content-Type'],
     maxAge: 600,
   }));
 
@@ -136,6 +170,129 @@ export function createApp({ config, database, mqttBridge, eventHub, clock = () =
       status: database.latestStatus(robotId),
       pid: database.latestPidState(robotId),
     });
+  });
+
+  app.get('/api/robots/:robotId/telemetry.csv/info', c => {
+    const robotId = c.req.param('robotId');
+    if (!isAllowedRobot(config, robotId)) return c.json({ error: 'unknown_robot' }, 404);
+    try {
+      const { from, to } = parseCsvRange(
+        c.req.query('from'), c.req.query('to'), clock(),
+      );
+      const rowCount = database.telemetryCsvCount(robotId, from, to);
+      const maxRows = exportLimit(config);
+      if (rowCount > maxRows) {
+        return c.json({ error: 'export_too_large', maxRows }, 413);
+      }
+      return c.json({ robotId, from, to, rowCount, maxRows });
+    } catch (error) {
+      return rangeErrorResponse(c, error);
+    }
+  });
+
+  app.get('/api/robots/:robotId/telemetry.csv', c => {
+    const robotId = c.req.param('robotId');
+    if (!isAllowedRobot(config, robotId)) return c.json({ error: 'unknown_robot' }, 404);
+    let snapshot;
+    let release = () => {};
+    try {
+      const { from, to } = parseCsvRange(
+        c.req.query('from'), c.req.query('to'), clock(),
+      );
+      const maxRows = exportLimit(config);
+      snapshot = database.openTelemetryCsvExport(robotId, from, to, maxRows);
+      if (snapshot.tooLarge) {
+        snapshot.close();
+        return c.json({ error: 'export_too_large', maxRows }, 413);
+      }
+      const rowCount = snapshot.rowCount;
+      let released = false;
+      release = () => {
+        if (released) return;
+        released = true;
+        snapshot.close();
+      };
+      if (rowCount === 0) {
+        release();
+        return new Response(null, {
+          status: 204,
+          headers: { 'X-Export-Row-Count': '0', 'Cache-Control': 'no-store' },
+        });
+      }
+
+      const pageSize = Number.isSafeInteger(config.csvExportPageSize) &&
+          config.csvExportPageSize > 0
+        ? Math.min(config.csvExportPageSize, CSV_EXPORT_PAGE_SIZE) : CSV_EXPORT_PAGE_SIZE;
+      let page = snapshot.page(null, pageSize);
+      if (page.length === 0) {
+        release();
+        return c.json({ error: 'csv_snapshot_incomplete' }, 500);
+      }
+
+      const filename = csvFilename(robotId, from, to);
+      const encoder = new TextEncoder();
+      let pageIndex = 0;
+      let sentRows = 0;
+      let cursor = null;
+      let headerSent = false;
+      const stream = new ReadableStream({
+        pull(controller) {
+          try {
+            if (!headerSent) {
+              controller.enqueue(encoder.encode(TELEMETRY_CSV_HEADER));
+              headerSent = true;
+              return;
+            }
+            if (sentRows >= rowCount) {
+              release();
+              controller.close();
+              return;
+            }
+            if (pageIndex >= page.length) {
+              page = snapshot.page(cursor, pageSize);
+              pageIndex = 0;
+              if (page.length === 0) {
+                release();
+                controller.error(new Error('csv_snapshot_incomplete'));
+                return;
+              }
+            }
+            const remaining = rowCount - sentRows;
+            const rows = page.slice(pageIndex, pageIndex + remaining);
+            pageIndex += rows.length;
+            const last = rows.at(-1);
+            cursor = {
+              receivedAt: last.received_at,
+              seq: last.seq,
+              bootId: last.boot_id,
+            };
+            sentRows += rows.length;
+            controller.enqueue(encoder.encode(rows.map(serializeTelemetryCsvRow).join('')));
+            if (sentRows >= rowCount) {
+              release();
+              controller.close();
+            }
+          } catch {
+            try { release(); } catch { /* Preserve the stream failure. */ }
+            controller.error(new Error('csv_stream_failed'));
+          }
+        },
+        cancel() {
+          release();
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Cache-Control': 'no-store',
+          'X-Export-Row-Count': String(rowCount),
+        },
+      });
+    } catch (error) {
+      try { release(); } catch { /* Preserve the original request error. */ }
+      return rangeErrorResponse(c, error);
+    }
   });
 
   app.get('/api/robots/:robotId/telemetry', c => {
@@ -174,10 +331,6 @@ export function createApp({ config, database, mqttBridge, eventHub, clock = () =
     if (!clientOriginAllowed(c.req.header('Origin'), config)) {
       return c.json({ error: 'origin_denied' }, 403);
     }
-    if (!isAuthorized(c.req.header('Authorization'), config.adminToken)) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
-
     let gains;
     try {
       gains = validatePidPost(await readJsonLimited(c.req.raw, 1024));
@@ -244,4 +397,4 @@ export function createApp({ config, database, mqttBridge, eventHub, clock = () =
   return app;
 }
 
-export { isAuthorized, parseBefore, parseLimit };
+export { parseBefore, parseLimit };

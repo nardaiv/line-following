@@ -44,14 +44,12 @@ export interface PidCommandResponse {
 export function sendPidCommand(
   robotId: string,
   gains: PidGains,
-  adminToken: string,
 ): Promise<PidCommandResponse> {
   return requestJson<PidCommandResponse>(
     `/api/robots/${encodeURIComponent(robotId)}/pid`,
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${adminToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(gains),

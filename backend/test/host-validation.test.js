@@ -11,7 +11,6 @@ test('HTTP endpoints reject untrusted Host headers and accept loopback hosts', a
   const app = createApp({
     config: {
       robotIds: ['linebot-01'],
-      adminToken: 'x'.repeat(40),
       allowedOrigins: ['http://localhost:5173'],
       httpHost: '127.0.0.1',
       httpPort: 3000,

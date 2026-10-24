@@ -1,6 +1,6 @@
 # Local React dashboard
 
-The dashboard has no runtime font/CDN dependency, so the UI itself can load offline with local services. The Vite/React interface reads telemetry, robot status, PID state and history from the Hono bridge, and streams robot-scoped SSE updates. It does not send motor commands; PID writes only update gains through the protected backend API. The admin token is typed into the page for the current tab and kept in component memory only. It is never added to a Vite environment file or bundled build.
+The dashboard has no runtime font/CDN dependency, so the UI itself can load offline with local services. The Vite/React interface reads telemetry, robot status, PID state and history from the Hono bridge, and streams robot-scoped SSE updates. It does not send motor commands; PID writes only update gains and are restricted by the backend's loopback binding and `ALLOWED_ORIGINS` check. There is no admin-token authentication; do not expose the backend to untrusted networks or local users.
 
 ## Run locally
 
@@ -13,9 +13,11 @@ npm test
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Vite proxies `/api` and `/health` to the loopback backend at `127.0.0.1:3000`; no browser MQTT credentials or broker connection are used. Enter the local backend `ADMIN_TOKEN` in the PID panel before submitting gains. The UI displays device-confirmed gains separately from the editable draft and reports `pending`, `applied`, `persisted`, `rejected` or failed states.
+Open `http://127.0.0.1:5173`. Vite proxies `/api` and `/health` to the loopback backend at `127.0.0.1:3000`; no browser MQTT credentials or broker connection are used. The PID panel submits gains from the configured dashboard origin and displays device-confirmed gains separately from the editable draft, reporting `pending`, `applied`, `persisted`, `rejected` or failed states.
 
 The UI shows separate front and rear five-bit digital IR rows, ordered left-to-right (bit 0 is robot-left on both rows), plus line position/error, the selected control row, a straightness cue when both center sensors detect the line, PID correction, signed motor PWM, mode, control period, drop counts, Wi-Fi/MQTT status, and a bounded recent telemetry history. The cue is informational only. Legacy single-row telemetry is displayed as front-only. Data is marked stale after 2.5 seconds without a sample.
+
+The **Export CSV** panel checks a robot and UTC interval before enabling a direct attachment download. The start bound is inclusive and the end bound exclusive. Exports come from SQLite (not the chart cache), are ordered oldest-first, and are capped at 100,000 rows per download.
 
 ## Checks and build
 

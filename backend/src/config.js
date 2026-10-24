@@ -28,10 +28,6 @@ export function validateEnvironment(env) {
   if (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535) {
     throw new Error('HTTP_PORT must be an integer from 1 to 65535');
   }
-  const adminToken = requiredString(env, 'ADMIN_TOKEN');
-  if (Buffer.byteLength(adminToken) < 32) {
-    throw new Error('ADMIN_TOKEN must contain at least 32 bytes');
-  }
   const robotIds = [...new Set(requiredString(env, 'ROBOT_IDS').split(',').map(x => x.trim()))];
   if (robotIds.length === 0 || robotIds.some(id => !ROBOT_ID_RE.test(id))) {
     throw new Error('ROBOT_IDS must be comma-separated safe robot IDs');
@@ -59,7 +55,6 @@ export function validateEnvironment(env) {
     dbPath,
     httpHost,
     httpPort,
-    adminToken,
     allowedOrigins,
     robotIds,
     retentionDays,

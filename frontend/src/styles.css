@@ -97,6 +97,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .telemetry-column, .control-column { display: grid; gap: 14px; min-width: 0; }
 .panel { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .sensor-panel { padding: 19px 21px 15px; }
+.export-panel { margin-top: 15px; padding: 17px 19px 13px; }
+.export-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; align-items: end; margin-top: 14px; }
+.export-field { display: grid; min-width: 0; gap: 6px; }
+.export-field > span { color: var(--muted); font: 500 9px var(--mono); letter-spacing: .08em; }
+.export-field input { width: 100%; min-width: 0; padding: 9px 8px; color: var(--text); border: 1px solid var(--border); border-radius: 6px; background: var(--surface-inset); font: 10px var(--mono); }
+.export-field input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px #a594f01a; outline: 0; }
+.export-field input:disabled { opacity: .55; }
+.export-check { justify-self: start; }
+.export-result { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 22px; margin-top: 12px; color: var(--muted); font-size: 10px; }
+.export-result--error { color: #ffc2c9; }
+.export-result a { text-decoration: none; }
+.export-note { margin: 8px 0 0; color: var(--subtle); font-size: 9px; line-height: 1.4; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .panel-heading h2 { margin: 5px 0 0; color: var(--text); font-size: 17px; font-weight: 500; letter-spacing: -.025em; }
 .panel-heading--compact h2 { font-size: 15px; }
@@ -169,18 +181,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .gain-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
 .gain-field { min-width: 0; display: grid; gap: 6px; }
 .gain-field__label { color: var(--muted); font: 500 9px var(--mono); letter-spacing: .1em; }
-.gain-field input, .token-field input {
+.gain-field input {
   width: 100%; min-width: 0; padding: 10px 10px; color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; background: var(--surface-inset); font: 12px var(--mono); transition: border-color .15s, box-shadow .15s;
 }
-.gain-field input:focus, .token-field input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px #a594f01a; outline: 0; }
+.gain-field input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px #a594f01a; outline: 0; }
 .gain-field input::-webkit-inner-spin-button, .gain-field input::-webkit-outer-spin-button { opacity: .45; }
 .gain-field__limit { color: var(--subtle); font: 8px var(--mono); }
-.token-field { display: grid; gap: 7px; }
-.token-field > span { color: var(--muted); font-size: 10px; font-weight: 500; }
-.token-field input { letter-spacing: .08em; }
-.token-field input::placeholder { color: #9690a4; font: 10px var(--mono); letter-spacing: 0; }
-.privacy-note { margin: -9px 0 0; color: var(--subtle); font-size: 9px; line-height: 1.4; }
 .pid-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .gain-draft-status { color: var(--subtle); font: 8px var(--mono); letter-spacing: .075em; }
 .button { border: 0; border-radius: 6px; font-weight: 600; transition: background .15s, transform .15s, opacity .15s; }
@@ -255,6 +262,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .metric-card__value span { font-size: 8px; }
   .metric-card__detail { font-size: 7px; }
   .sensor-panel, .pid-panel { padding: 15px 13px 13px; }
+  .export-form { grid-template-columns: 1fr; }
+  .export-panel { padding: 15px 13px 13px; }
   .panel-heading h2 { font-size: 15px; }
   .eyebrow { font-size: 8px; }
   .sensor-array__rail { gap: 5px; }

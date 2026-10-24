@@ -56,7 +56,6 @@ test('Node HTTP adapter serves health and drains before database shutdown', asyn
   const app = createApp({
     config: {
       robotIds: ['linebot-01'],
-      adminToken: 'x'.repeat(40),
       allowedOrigins: ['http://localhost:5173'],
     },
     database,

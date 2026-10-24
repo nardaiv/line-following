@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "npm run check && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test src/lib/robot-data.test.js",
+    "test": "node --test src/lib/robot-data.test.js src/lib/telemetry-export.test.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {

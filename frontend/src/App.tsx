@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import PidTuningForm, { type CommandFeedback } from './components/PidTuningForm';
 import SensorArray from './components/SensorArray';
 import StatusPill from './components/StatusPill';
+import TelemetryExport from './components/TelemetryExport';
 import TrendChart from './components/TrendChart';
 import { ApiError, requestJson, sendPidCommand } from './lib/api';
 import {
@@ -123,7 +124,6 @@ export default function App() {
   const [mqttConnected, setMqttConnected] = useState(false);
   const [backendOnline, setBackendOnline] = useState(false);
   const [streamOnline, setStreamOnline] = useState(false);
-  const [adminToken, setAdminToken] = useState('');
   const [feedback, setFeedback] = useState<CommandFeedback>({
     status: 'idle', requestId: null, message: null,
   });
@@ -298,12 +298,11 @@ export default function App() {
   const displayedHistory = useMemo(() => history.slice(-MAX_POINTS), [history]);
 
   async function applyPid(gains: { kp: number; ki: number; kd: number }) {
-    if (!adminToken.trim()) return;
     const targetRobotId = robotId;
     setSending(true);
     setFeedback({ status: 'pending', requestId: null, message: 'Publishing full PID set to device…' });
     try {
-      const result = await sendPidCommand(targetRobotId, gains, adminToken.trim());
+      const result = await sendPidCommand(targetRobotId, gains);
       if (activeRobotId.current !== targetRobotId) return;
       setFeedback(current => current.requestId === result.requestId && current.status !== 'pending'
         ? current
@@ -426,6 +425,8 @@ export default function App() {
           <TrendChart points={displayedHistory} field="correction" title="PID correction" color="#ef91bc" unit="PWM" />
         </section>
 
+        <TelemetryExport key={robotId} robotId={robotId} />
+
         <section className="panel detail-panel">
           <div className="panel-heading panel-heading--compact">
             <div><span className="eyebrow">DEVICE DIAGNOSTICS</span><h2>Runtime snapshot</h2></div>
@@ -449,8 +450,6 @@ export default function App() {
           key={robotId}
           pid={pid}
           mqttConnected={mqttConnected}
-          adminToken={adminToken}
-          onTokenChange={setAdminToken}
           feedback={feedback}
           busy={sending}
           onApply={gains => void applyPid(gains)}

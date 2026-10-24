@@ -12,16 +12,12 @@ export type CommandFeedback = {
 export default function PidTuningForm({
   pid,
   mqttConnected,
-  adminToken,
-  onTokenChange,
   feedback,
   busy,
   onApply,
 }: {
   pid: PidState | null;
   mqttConnected: boolean;
-  adminToken: string;
-  onTokenChange: (token: string) => void;
   feedback: CommandFeedback;
   busy: boolean;
   onApply: (gains: PidGains) => void;
@@ -46,7 +42,7 @@ export default function PidTuningForm({
   }
 
   const canSubmit = Boolean(
-    pid && mqttConnected && gains && dirty && adminToken.trim().length >= 32 && !busy,
+    pid && mqttConnected && gains && dirty && !busy,
   );
 
   return <section className="panel pid-panel" aria-labelledby="pid-title">
@@ -87,19 +83,6 @@ export default function PidTuningForm({
           <span className="gain-field__limit">0 — {GAIN_LIMITS[key]}</span>
         </label>)}
       </div>
-
-      <label className="token-field">
-        <span>Local admin token</span>
-        <input
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={adminToken}
-          onChange={event => onTokenChange(event.target.value)}
-          placeholder="Enter ADMIN_TOKEN for this session"
-        />
-      </label>
-      <p className="privacy-note">Token remains in page memory only; it is never saved to browser storage.</p>
 
       <div className="pid-submit-row">
         <span className="gain-draft-status">

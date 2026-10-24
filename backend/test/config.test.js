@@ -6,7 +6,6 @@ const testEnvironment = {
   MQTT_USERNAME: 'test-user',
   MQTT_PASSWORD: 'test-password',
   DB_PATH: ':memory:',
-  ADMIN_TOKEN: 'x'.repeat(40),
   ALLOWED_ORIGINS: 'http://localhost:5173',
   ROBOT_IDS: 'linebot-01',
 };
